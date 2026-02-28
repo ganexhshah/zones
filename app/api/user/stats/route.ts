@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       include: {
         tournament: {
           select: {
-            name: true,
+            title: true,
             prizePool: true,
             status: true,
           },
@@ -28,37 +28,102 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Get user's custom matches
-    const customMatches = await prisma.customMatch.findMany({
+    // Get user's custom matches as creator
+    const customMatchesAsCreator = await prisma.customMatch.findMany({
       where: {
-        OR: [
-          { creatorId: payload.userId },
-          { opponentId: payload.userId },
-        ],
-        status: { in: ['COMPLETED', 'CANCELLED'] },
+        createdByUserId: payload.userId,
       },
       include: {
-        creator: {
+        createdBy: {
           select: { id: true, name: true },
         },
-        opponent: {
-          select: { id: true, name: true },
+        participants: {
+          include: {
+            user: {
+              select: { id: true, name: true },
+            },
+          },
+        },
+        resultSubmissions: {
+          where: { status: 'APPROVED' },
+          select: {
+            winnerUserId: true,
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
       take: 20,
     });
 
+    // Get user's custom matches as participant
+    const participantRecords = await prisma.customMatchParticipant.findMany({
+      where: {
+        userId: payload.userId,
+      },
+      include: {
+        customMatch: {
+          include: {
+            createdBy: {
+              select: { id: true, name: true },
+            },
+            participants: {
+              include: {
+                user: {
+                  select: { id: true, name: true },
+                },
+              },
+            },
+            resultSubmissions: {
+              where: { status: 'APPROVED' },
+              select: {
+                winnerUserId: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    // Combine and deduplicate matches
+    const allMatchesMap = new Map();
+    
+    customMatchesAsCreator.forEach(match => {
+      allMatchesMap.set(match.id, match);
+    });
+    
+    participantRecords.forEach(participant => {
+      if (participant.customMatch && !allMatchesMap.has(participant.customMatch.id)) {
+        allMatchesMap.set(participant.customMatch.id, participant.customMatch);
+      }
+    });
+
+    const customMatches = Array.from(allMatchesMap.values());
+
     // Calculate stats
-    const totalMatches = customMatches.filter(m => m.status === 'COMPLETED').length;
-    const wins = customMatches.filter(m => m.winnerId === payload.userId).length;
+    const completedMatches = customMatches.filter(m => m.status === 'CLOSED');
+    const totalMatches = completedMatches.length;
+    
+    let wins = 0;
+    completedMatches.forEach(match => {
+      const approvedResult = match.resultSubmissions?.[0];
+      if (approvedResult?.winnerUserId === payload.userId) {
+        wins++;
+      }
+    });
+    
     const losses = totalMatches - wins;
     const winRate = totalMatches > 0 ? ((wins / totalMatches) * 100).toFixed(0) : '0';
 
     // Calculate total earnings from custom matches
-    const totalEarnings = customMatches
-      .filter(m => m.winnerId === payload.userId)
-      .reduce((sum, match) => sum + (match.entryFee * 2 * 0.9), 0); // 90% payout after 10% platform fee
+    let totalEarnings = 0;
+    completedMatches.forEach(match => {
+      const approvedResult = match.resultSubmissions?.[0];
+      if (approvedResult?.winnerUserId === payload.userId) {
+        totalEarnings += match.entryFee * 2 * 0.9; // 90% payout after 10% platform fee
+      }
+    });
 
     // Get transaction history for more accurate earnings
     const transactions = await prisma.transaction.findMany({
@@ -71,16 +136,31 @@ export async function GET(req: NextRequest) {
     const totalWinnings = transactions.reduce((sum, t) => sum + t.amount, 0);
 
     // Format match history
-    const matchHistory = customMatches.map(match => ({
-      id: match.id,
-      title: `${match.mode} - ${match.roomType}`,
-      mode: match.mode,
-      result: match.winnerId === payload.userId ? 'Won' : match.status === 'COMPLETED' ? 'Lost' : 'Cancelled',
-      amount: match.entryFee * 2 * 0.9,
-      isWin: match.winnerId === payload.userId,
-      time: match.updatedAt,
-      opponent: match.creatorId === payload.userId ? match.opponent?.name : match.creator?.name,
-    }));
+    const matchHistory = customMatches.map(match => {
+      const approvedResult = match.resultSubmissions?.[0];
+      const isWin = approvedResult?.winnerUserId === payload.userId;
+      const isCreator = match.createdByUserId === payload.userId;
+      
+      // Find opponent
+      let opponentName = 'Unknown';
+      if (isCreator) {
+        const opponent = match.participants?.find((p: any) => p.userId !== payload.userId);
+        opponentName = opponent?.user?.name || 'Waiting';
+      } else {
+        opponentName = match.createdBy?.name || 'Unknown';
+      }
+      
+      return {
+        id: match.id,
+        title: match.title || `${match.mode} - ${match.roomType}`,
+        mode: match.mode,
+        result: match.status === 'CLOSED' ? (isWin ? 'Won' : 'Lost') : 'Cancelled',
+        amount: match.entryFee * 2 * 0.9,
+        isWin,
+        time: match.updatedAt,
+        opponent: opponentName,
+      };
+    });
 
     const stats = {
       totalMatches,
