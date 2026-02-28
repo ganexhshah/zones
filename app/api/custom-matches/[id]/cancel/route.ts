@@ -35,24 +35,47 @@ export async function POST(
       return NextResponse.json({ error: 'Cannot cancel match in current status' }, { status: 400 });
     }
 
-    // Refund entry fees to all participants
-    const refundPromises = match.participants.map(async (participant) => {
-      return prisma.user.update({
-        where: { id: participant.userId },
+    const updatedMatch = await prisma.$transaction(async (tx) => {
+      // Refund entry fees to all participants.
+      await Promise.all(
+        match.participants.map(async (participant) => {
+          await tx.user.update({
+            where: { id: participant.userId },
+            data: {
+              walletBalance: {
+                increment: match.entryFee,
+              },
+            },
+          });
+
+          if (match.entryFee > 0) {
+            await tx.transaction.create({
+              data: {
+                userId: participant.userId,
+                type: 'custom_match_refund',
+                amount: match.entryFee,
+                method: 'wallet',
+                status: 'completed',
+                reference: `custom_match_cancel:${match.id}`,
+              },
+            });
+          }
+        })
+      );
+
+      // A cancelled match should not expose room credentials or pending/past results.
+      await tx.customMatchResultSubmission.deleteMany({
+        where: { customMatchId: params.id },
+      });
+
+      return tx.customMatch.update({
+        where: { id: params.id },
         data: {
-          walletBalance: {
-            increment: match.entryFee,
-          },
+          status: 'CLOSED',
+          roomId: null,
+          roomPassword: null,
         },
       });
-    });
-
-    await Promise.all(refundPromises);
-
-    // Update match status to CLOSED
-    const updatedMatch = await prisma.customMatch.update({
-      where: { id: params.id },
-      data: { status: 'CLOSED' },
     });
 
     return NextResponse.json({ 

@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const mine = searchParams.get('mine') === '1';
 
-    const matches = await prisma.customMatch.findMany({
+    const rows = await prisma.customMatch.findMany({
       where: mine
         ? {
             OR: [
@@ -25,7 +25,12 @@ export async function GET(req: NextRequest) {
               { participants: { some: { userId: auth.user.id } } },
             ],
           }
-        : { status: { in: ['OPEN', 'ACTIVE'] } },
+        : {
+            OR: [
+              { status: { in: ['OPEN', 'ACTIVE', 'FULL'] } },
+              { participants: { some: { userId: auth.user.id } } },
+            ],
+          },
       include: {
         createdBy: { select: { id: true, name: true } },
         participants: { select: { id: true, userId: true } },
@@ -36,10 +41,34 @@ export async function GET(req: NextRequest) {
         resultSubmissions: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { id: true, winnerUserId: true, status: true, createdAt: true },
+          select: {
+            id: true,
+            winnerUserId: true,
+            status: true,
+            proofUrl: true,
+            createdAt: true,
+            winner: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    const matches = rows.map((match) => {
+      const isCreator = match.createdByUserId === auth.user.id;
+      const isParticipant = match.participants.some((p) => p.userId === auth.user.id);
+      const latestResult = match.resultSubmissions[0] ?? null;
+
+      // Room credentials must only be visible to creator or joined participants.
+      const visibleRoomId = isCreator || isParticipant ? match.roomId : null;
+      const visibleRoomPassword = isCreator || isParticipant ? match.roomPassword : null;
+
+      return {
+        ...match,
+        roomId: visibleRoomId,
+        roomPassword: visibleRoomPassword,
+        resultSubmissions: latestResult ? [latestResult] : [],
+      };
     });
 
     return NextResponse.json({ matches });

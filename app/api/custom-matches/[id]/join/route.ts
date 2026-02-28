@@ -17,6 +17,9 @@ export async function POST(
       },
     });
     if (!match) return NextResponse.json({ error: 'Match not found' }, { status: 404 });
+    if (!['OPEN', 'ACTIVE'].includes(match.status)) {
+      return NextResponse.json({ error: 'Match is not open for joining' }, { status: 400 });
+    }
     if (match.createdByUserId === auth.user.id) {
       return NextResponse.json({ error: 'Creator already in match' }, { status: 400 });
     }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   try {
     const token = req.headers.get('authorization')?.replace('Bearer ', '');
@@ -37,6 +39,7 @@ export async function GET(req: NextRequest) {
               id: true,
               name: true,
               email: true,
+              avatar: true,
             },
           },
         },

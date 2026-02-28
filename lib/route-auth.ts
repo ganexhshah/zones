@@ -22,3 +22,35 @@ export function requireAuthPayload(req: NextRequest) {
   if (!payload) return { error: 'Invalid token', status: 401 as const };
   return { payload };
 }
+
+function parseCsvEnv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+export async function requireAdminUser(req: NextRequest) {
+  const auth = await requireAuthUser(req);
+  if ('error' in auth) return auth;
+
+  const allowedEmails = new Set<string>([
+    ...parseCsvEnv(process.env.ADMIN_EMAILS),
+    ...parseCsvEnv(process.env.ADMIN_EMAIL),
+  ]);
+  const allowedUserIds = new Set<string>([
+    ...parseCsvEnv(process.env.ADMIN_USER_IDS),
+    ...parseCsvEnv(process.env.ADMIN_USER_ID),
+  ]);
+
+  const isAllowed =
+    allowedUserIds.has(auth.user.id) ||
+    (!!auth.user.email && allowedEmails.has(auth.user.email));
+
+  if (!isAllowed) {
+    return { error: 'Admin access required', status: 403 as const };
+  }
+
+  return auth;
+}

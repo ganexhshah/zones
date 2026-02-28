@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireAuthPayload } from '@/lib/route-auth';
+import { requireAdminUser } from '@/lib/route-auth';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const auth = requireAuthPayload(req);
+    const auth = await requireAdminUser(req);
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
     const body = await req.json().catch(() => ({}));
@@ -34,7 +34,7 @@ export async function POST(
         where: { id: submission.id },
         data: {
           status: action === 'accept' ? 'APPROVED' : 'REJECTED',
-          reviewerUserId: auth.payload.userId,
+          reviewerUserId: auth.user.id,
           reviewedAt: new Date(),
           reviewNote: note,
         },

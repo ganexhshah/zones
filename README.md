@@ -14,6 +14,9 @@ Create a `.env` file with:
 ```
 DATABASE_URL="your_database_url"
 JWT_SECRET="your_jwt_secret"
+ADMIN_EMAILS="admin1@example.com,admin2@example.com"
+# or use ADMIN_EMAIL for a single admin email
+# ADMIN_USER_IDS / ADMIN_USER_ID are also supported
 CLOUDINARY_CLOUD_NAME="your_cloudinary_name"
 CLOUDINARY_API_KEY="your_cloudinary_key"
 CLOUDINARY_API_SECRET="your_cloudinary_secret"
