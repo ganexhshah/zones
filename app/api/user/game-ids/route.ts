@@ -39,18 +39,27 @@ export async function POST(req: NextRequest) {
 
     const { gameName, gameId } = await req.json();
 
+    const normalizedGameName = String(gameName || '').trim();
+    const normalizedGameId = String(gameId || '').trim();
+    if (!normalizedGameName) {
+      return NextResponse.json({ error: 'Game name is required' }, { status: 400 });
+    }
+    if (!/^\d{10}$/.test(normalizedGameId)) {
+      return NextResponse.json({ error: 'Game UID must be exactly 10 digits' }, { status: 400 });
+    }
+
     const newGameId = await prisma.gameId.upsert({
       where: {
         userId_gameName: {
           userId: payload.userId,
-          gameName,
+          gameName: normalizedGameName,
         },
       },
-      update: { gameId },
+      update: { gameId: normalizedGameId },
       create: {
         userId: payload.userId,
-        gameName,
-        gameId,
+        gameName: normalizedGameName,
+        gameId: normalizedGameId,
       },
     });
 
