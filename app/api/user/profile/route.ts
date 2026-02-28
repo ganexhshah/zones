@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
             id: true,
             gameName: true,
             gameId: true,
+            inGameName: true,
           },
         },
       },
