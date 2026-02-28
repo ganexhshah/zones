@@ -1,0 +1,442 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  phone         String?   @unique
+  password      String?
+  name          String?
+  avatar        String?
+  googleId      String?   @unique
+  authProvider  String    @default("email")
+  walletBalance Float     @default(0)
+  isVerified    Boolean   @default(false)
+  isBlocked     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  gameIds       GameId[]
+  tournaments   TournamentParticipant[]
+  transactions  Transaction[]
+  blockedUsers  BlockedUser[] @relation("BlockedBy")
+  blockedBy     BlockedUser[] @relation("Blocked")
+  ownedTeams    Team[]        @relation("TeamCaptain")
+  teamMemberships TeamMember[]
+  registrations TournamentRegistration[]
+  resultSubmissions MatchResultSubmission[] @relation("ResultSubmittedBy")
+  disputesRaised TournamentDispute[] @relation("DisputeRaisedBy")
+  payouts TournamentPayout[]
+  customMatchesCreated CustomMatch[] @relation("CustomMatchCreator")
+  customMatchJoinRequests CustomMatchJoinRequest[] @relation("CustomMatchJoinRequester")
+  customMatchJoinReviews CustomMatchJoinRequest[] @relation("CustomMatchJoinReviewer")
+  customMatchParticipants CustomMatchParticipant[]
+  customMatchResultsSubmitted CustomMatchResultSubmission[] @relation("CustomMatchResultSubmitter")
+  customMatchResultsReviewed CustomMatchResultSubmission[] @relation("CustomMatchResultReviewer")
+  customMatchesWon CustomMatchResultSubmission[] @relation("CustomMatchResultWinner")
+}
+
+model GameId {
+  id        String   @id @default(cuid())
+  userId    String
+  gameName  String
+  gameId    String
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, gameName])
+}
+
+model Tournament {
+  id            String    @id @default(cuid())
+  title         String
+  game          String
+  mode          String    @default("SOLO")
+  format        String    @default("BR_LEAGUE")
+  region        String?
+  entryFee      Float
+  prizePool     Float
+  currency      String    @default("NPR")
+  maxPlayers    Int
+  roomSize      Int?
+  startTime     DateTime
+  registrationOpenAt DateTime?
+  registrationCloseAt DateTime?
+  checkinOpenAt DateTime?
+  checkinCloseAt DateTime?
+  rulesText     String?
+  scoringConfig Json?
+  proofRequired Boolean   @default(true)
+  disputeWindowMinutes Int @default(15)
+  refundRules   String?
+  status        String    @default("upcoming")
+  imageUrl      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  participants  TournamentParticipant[]
+  teams         Team[]
+  registrations TournamentRegistration[]
+  matches       TournamentMatch[]
+  leaderboardEntries TournamentLeaderboardEntry[]
+  disputes      TournamentDispute[]
+  payouts       TournamentPayout[]
+}
+
+model TournamentParticipant {
+  id           String     @id @default(cuid())
+  userId       String
+  tournamentId String
+  rank         Int?
+  prize        Float?
+  joinedAt     DateTime   @default(now())
+  
+  user         User       @relation(fields: [userId], references: [id])
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  
+  @@unique([userId, tournamentId])
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  tournamentId String?
+  name        String
+  type        String   // DUO | SQUAD
+  region      String?
+  captainId   String
+  inviteCode  String?  @unique
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tournament  Tournament? @relation(fields: [tournamentId], references: [id])
+  captain     User        @relation("TeamCaptain", fields: [captainId], references: [id])
+  members     TeamMember[]
+  registrations TournamentRegistration[]
+
+  @@index([captainId])
+  @@index([tournamentId])
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  teamId     String
+  userId     String
+  role      String   @default("MEMBER") // CAPTAIN | MEMBER
+  status    String   @default("ACTIVE") // ACTIVE | LEFT | INVITED
+  joinedAt   DateTime @default(now())
+
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model TournamentRegistration {
+  id             String   @id @default(cuid())
+  tournamentId    String
+  userId          String?
+  teamId          String?
+  paid           Boolean  @default(false)
+  status         String   @default("PENDING") // PENDING | APPROVED | CHECKED_IN | NO_SHOW | DISQUALIFIED | REJECTED
+  seed           Int?
+  approvedAt     DateTime?
+  checkedInAt    DateTime?
+  checkinStatus  String   @default("PENDING") // PENDING | CHECKED_IN | NO_SHOW
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tournament     Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user           User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  team           Team?      @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  matchParticipants TournamentMatchParticipant[]
+  resultSubmissions MatchResultSubmission[]
+  leaderboardEntries TournamentLeaderboardEntry[]
+  disputes        TournamentDispute[]
+  payouts         TournamentPayout[]
+
+  @@index([tournamentId, status])
+  @@index([tournamentId, checkinStatus])
+  @@unique([tournamentId, userId])
+  @@unique([tournamentId, teamId])
+}
+
+model TournamentMatch {
+  id             String   @id @default(cuid())
+  tournamentId    String
+  roundNo        Int
+  matchIndex     Int?
+  groupNo        Int?
+  roomId         String?
+  roomPass       String?
+  scheduledAt    DateTime?
+  status         String   @default("SCHEDULED") // SCHEDULED | LIVE | FINISHED | CANCELLED
+  formatSnapshot String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tournament     Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  participants   TournamentMatchParticipant[]
+  resultSubmissions MatchResultSubmission[]
+  disputes        TournamentDispute[]
+
+  @@index([tournamentId, roundNo])
+  @@index([tournamentId, status])
+}
+
+model TournamentMatchParticipant {
+  id             String   @id @default(cuid())
+  matchId         String
+  registrationId  String
+  slotNo         Int?
+  joined         Boolean  @default(false)
+  isWinner       Boolean?
+  score          Float?
+  placement      Int?
+  kills          Int?
+  seed           Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  match          TournamentMatch         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  registration   TournamentRegistration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, registrationId])
+  @@index([registrationId])
+}
+
+model MatchResultSubmission {
+  id               String   @id @default(cuid())
+  matchId           String
+  registrationId    String
+  submittedByUserId String?
+  proofUrl          String?
+  proofMeta         Json?
+  placement         Int?
+  kills             Int?
+  roundWins         Int?
+  roundLosses       Int?
+  score             Float?
+  scoreBreakdown    Json?
+  verifiedStatus    String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  verifiedByUserId  String?
+  verifierNote      String?
+  submittedAt       DateTime @default(now())
+  verifiedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  match             TournamentMatch         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  registration      TournamentRegistration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  submittedBy       User?                   @relation("ResultSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([matchId, verifiedStatus])
+  @@index([registrationId])
+}
+
+model TournamentLeaderboardEntry {
+  id             String   @id @default(cuid())
+  tournamentId    String
+  registrationId  String
+  rank           Int?
+  points         Float    @default(0)
+  kills          Int      @default(0)
+  placementPoints Float   @default(0)
+  bonusPoints    Float    @default(0)
+  matchesPlayed  Int      @default(0)
+  wins           Int      @default(0)
+  lastCalculatedAt DateTime @default(now())
+  snapshotMeta   Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tournament     Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  registration   TournamentRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, registrationId])
+  @@index([tournamentId, rank])
+}
+
+model TournamentDispute {
+  id               String   @id @default(cuid())
+  tournamentId      String
+  matchId           String
+  registrationId    String?
+  raisedByUserId    String
+  reason            String
+  details           String?
+  evidenceUrl       String?
+  status            String   @default("OPEN") // OPEN | REVIEWING | RESOLVED | REJECTED
+  resolutionNote    String?
+  resolvedByUserId  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  resolvedAt        DateTime?
+
+  tournament        Tournament             @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  match             TournamentMatch        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  registration      TournamentRegistration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  raisedBy          User                   @relation("DisputeRaisedBy", fields: [raisedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([tournamentId, status])
+  @@index([matchId])
+}
+
+model TournamentPayout {
+  id               String   @id @default(cuid())
+  tournamentId      String
+  registrationId    String?
+  userId            String
+  amount            Float
+  currency          String   @default("NPR")
+  rank              Int?
+  reason            String?
+  status            String   @default("PENDING") // PENDING | SENT | FAILED | CANCELLED
+  method            String?  // wallet | manual
+  reference         String?
+  initiatedByUserId String?
+  processedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tournament        Tournament             @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  registration      TournamentRegistration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+  user              User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tournamentId, status])
+  @@index([userId])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  amount      Float
+  status      String   @default("pending")
+  method      String?
+  reference   String?
+  screenshot  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model PaymentQR {
+  id          String   @id @default(cuid())
+  method      String   @unique
+  qrImage     String
+  accountName String?
+  accountNumber String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model BlockedUser {
+  id          String   @id @default(cuid())
+  blockerId   String
+  blockedId   String
+  createdAt   DateTime @default(now())
+  
+  blocker     User     @relation("BlockedBy", fields: [blockerId], references: [id])
+  blocked     User     @relation("Blocked", fields: [blockedId], references: [id])
+  
+  @@unique([blockerId, blockedId])
+}
+
+model CustomMatch {
+  id                 String   @id @default(cuid())
+  createdByUserId    String
+  title              String
+  roomType           String   // CUSTOM_ROOM | LONE_WOLF
+  mode               String   // 1v1 | 2v2 | 3v3 | 4v4
+  rounds             Int
+  entryFee           Float    @default(0)
+  defaultCoin        Int      @default(9950)
+  throwableLimit     Boolean  @default(false)
+  characterSkill     Boolean  @default(false)
+  allSkillsAllowed   Boolean  @default(true)
+  selectedSkills     Json?
+  headshotOnly       Boolean  @default(true)
+  gunAttributes      Boolean  @default(false)
+  maxPlayers         Int      @default(2)
+  roomId             String?
+  roomPassword       String?
+  status             String   @default("OPEN") // OPEN | ACTIVE | FULL | CLOSED
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  createdBy          User     @relation("CustomMatchCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  joinRequests       CustomMatchJoinRequest[]
+  participants       CustomMatchParticipant[]
+  resultSubmissions  CustomMatchResultSubmission[]
+
+  @@index([createdByUserId, createdAt])
+  @@index([status, createdAt])
+}
+
+model CustomMatchJoinRequest {
+  id               String   @id @default(cuid())
+  customMatchId    String
+  userId           String
+  status           String   @default("PENDING") // PENDING | ACCEPTED | REJECTED
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  customMatch      CustomMatch @relation(fields: [customMatchId], references: [id], onDelete: Cascade)
+  user             User        @relation("CustomMatchJoinRequester", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy       User?       @relation("CustomMatchJoinReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([customMatchId, userId])
+  @@index([customMatchId, status])
+}
+
+model CustomMatchParticipant {
+  id            String   @id @default(cuid())
+  customMatchId String
+  userId        String
+  slotNo        Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customMatch   CustomMatch @relation(fields: [customMatchId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([customMatchId, userId])
+  @@index([customMatchId])
+}
+
+model CustomMatchResultSubmission {
+  id               String   @id @default(cuid())
+  customMatchId    String
+  submittedByUserId String
+  winnerUserId     String
+  proofUrl         String
+  status           String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewerUserId   String?
+  reviewNote       String?
+  reviewedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  customMatch      CustomMatch @relation(fields: [customMatchId], references: [id], onDelete: Cascade)
+  submittedBy      User        @relation("CustomMatchResultSubmitter", fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  winner           User        @relation("CustomMatchResultWinner", fields: [winnerUserId], references: [id], onDelete: Cascade)
+  reviewer         User?       @relation("CustomMatchResultReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([customMatchId, status])
+  @@index([winnerUserId, status])
+}
