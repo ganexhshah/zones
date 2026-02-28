@@ -43,13 +43,14 @@ model User {
 }
 
 model GameId {
-  id        String   @id @default(cuid())
-  userId    String
-  gameName  String
-  gameId    String
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  userId      String
+  gameName    String
+  gameId      String
+  inGameName  String?
+  createdAt   DateTime @default(now())
   
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@unique([userId, gameName])
 }
