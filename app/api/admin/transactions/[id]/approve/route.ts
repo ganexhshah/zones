@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
+import { sendPushToUser } from '@/lib/push';
 
 export async function POST(
   req: NextRequest,
@@ -82,6 +83,19 @@ export async function POST(
         `
       );
     }
+
+    await sendPushToUser(transaction.userId, {
+      title: transaction.type === 'withdrawal' ? 'Withdrawal Approved' : 'Deposit Approved',
+      body:
+        transaction.type === 'withdrawal'
+          ? `Your withdrawal of Rs ${transaction.amount.toFixed(2)} is completed.`
+          : `Rs ${transaction.amount.toFixed(2)} has been added to your wallet.`,
+      data: {
+        type: transaction.type,
+        status: 'completed',
+        transactionId: updatedTransaction.id,
+      },
+    });
 
     return NextResponse.json({ transaction: updatedTransaction });
   } catch (error) {

@@ -12,11 +12,14 @@ model User {
   email         String    @unique
   phone         String?   @unique
   password      String?
+  passwordHash  String?
   name          String?
   avatar        String?
   googleId      String?   @unique
   authProvider  String    @default("email")
   walletBalance Float     @default(0)
+  availableBalance Decimal @default(0) @db.Decimal(18, 2)
+  lockedBalance   Decimal @default(0) @db.Decimal(18, 2)
   isVerified    Boolean   @default(false)
   isBlocked     Boolean   @default(false)
   createdAt     DateTime  @default(now())
@@ -25,6 +28,8 @@ model User {
   gameIds       GameId[]
   tournaments   TournamentParticipant[]
   transactions  Transaction[]
+  pushTokens    UserPushToken[]
+  notifications UserNotification[]
   blockedUsers  BlockedUser[] @relation("BlockedBy")
   blockedBy     BlockedUser[] @relation("Blocked")
   ownedTeams    Team[]        @relation("TeamCaptain")
@@ -40,6 +45,47 @@ model User {
   customMatchResultsSubmitted CustomMatchResultSubmission[] @relation("CustomMatchResultSubmitter")
   customMatchResultsReviewed CustomMatchResultSubmission[] @relation("CustomMatchResultReviewer")
   customMatchesWon CustomMatchResultSubmission[] @relation("CustomMatchResultWinner")
+  broadcastsSent BroadcastNotification[] @relation("BroadcastCreatedBy")
+  matchesCreated Match[] @relation("MatchCreator")
+  matchesJoined Match[] @relation("MatchJoiner")
+  joinRequests JoinRequest[]
+  walletLedger WalletLedger[]
+  sentChatMessages ChatMessage[]
+  fraudFlags FraudFlag[]
+  refreshTokens RefreshToken[]
+  matchLogs MatchLog[] @relation("PerformedBy")
+}
+
+enum MatchStatus {
+  OPEN
+  PENDING_APPROVAL
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum JoinRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum EscrowStatus {
+  LOCKED
+  RELEASED
+  REFUNDED
+}
+
+enum WalletLedgerType {
+  LOCK
+  UNLOCK
+  DEBIT
+  CREDIT
+  REFUND
+  WIN
+  FEE
 }
 
 model GameId {
@@ -333,6 +379,56 @@ model Transaction {
   user        User     @relation(fields: [userId], references: [id])
 }
 
+model UserPushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  platform  String?
+  deviceId  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+}
+
+model BroadcastNotification {
+  id              String   @id @default(cuid())
+  title           String
+  message         String
+  type            String   @default("NORMAL") // NORMAL | BANNER
+  bannerImageUrl  String?
+  target          String   @default("ALL")
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdBy       User?    @relation("BroadcastCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model UserNotification {
+  id                String   @id @default(cuid())
+  userId            String
+  category          String   @default("SYSTEM") // SYSTEM | WALLET | TOURNAMENT | CUSTOM | BROADCAST
+  title             String
+  message           String
+  metadata          Json?
+  imageUrl          String?
+  isRead            Boolean  @default(false)
+  readAt            DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, isRead])
+}
+
 model PaymentQR {
   id          String   @id @default(cuid())
   method      String   @unique
@@ -342,6 +438,15 @@ model PaymentQR {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model AppConfig {
+  id                   String   @id @default("global")
+  minDepositAmount     Float    @default(100)
+  minWithdrawalAmount  Float    @default(100)
+  autoApprovePayments  Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 model BlockedUser {
@@ -440,4 +545,142 @@ model CustomMatchResultSubmission {
 
   @@index([customMatchId, status])
   @@index([winnerUserId, status])
+}
+
+model Match {
+  id                String      @id @default(uuid()) @db.Uuid
+  creatorId         String
+  joinerId          String?
+  gameName          String      @default("Free Fire")
+  roomType          String      @default("CUSTOM_ROOM")
+  matchType         String      @default("1v1")
+  rounds            Int         @default(7)
+  defaultCoin       Int         @default(9950)
+  throwableLimit    Boolean     @default(false)
+  characterSkill    Boolean     @default(false)
+  allSkillsAllowed  Boolean     @default(true)
+  selectedSkills    Json?
+  headshotOnly      Boolean     @default(true)
+  gunAttributes     Boolean     @default(false)
+  entryFee          Decimal     @db.Decimal(18, 2)
+  prizePool         Decimal     @db.Decimal(18, 2)
+  status            MatchStatus @default(OPEN)
+  roomIdEncrypted   String?
+  roomPassEncrypted String?
+  expiresAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  creator           User        @relation("MatchCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  joiner            User?       @relation("MatchJoiner", fields: [joinerId], references: [id], onDelete: SetNull)
+  joinRequests      JoinRequest[]
+  escrows           Escrow[]
+  walletLedger      WalletLedger[]
+  logs              MatchLog[]
+  chatMessages      ChatMessage[]
+  fraudFlags        FraudFlag[]
+
+  @@index([status, createdAt])
+  @@index([creatorId, createdAt])
+  @@index([joinerId, createdAt])
+}
+
+model JoinRequest {
+  id        String            @id @default(uuid()) @db.Uuid
+  matchId   String            @db.Uuid
+  joinerId  String
+  status    JoinRequestStatus @default(PENDING)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  match     Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  joiner    User              @relation(fields: [joinerId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, status])
+  @@unique([matchId, joinerId])
+}
+
+model Escrow {
+  id          String       @id @default(uuid()) @db.Uuid
+  matchId     String       @db.Uuid
+  totalAmount Decimal      @db.Decimal(18, 2)
+  status      EscrowStatus @default(LOCKED)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  match       Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, status])
+}
+
+model WalletLedger {
+  id           String           @id @default(uuid()) @db.Uuid
+  userId       String
+  matchId      String?          @db.Uuid
+  type         WalletLedgerType
+  amount       Decimal          @db.Decimal(18, 2)
+  balanceAfter Decimal          @db.Decimal(18, 2)
+  createdAt    DateTime         @default(now())
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match        Match?           @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+model MatchLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  matchId     String   @db.Uuid
+  action      String
+  performedBy String?
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  performer   User?    @relation("PerformedBy", fields: [performedBy], references: [id], onDelete: SetNull)
+
+  @@index([matchId, createdAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  matchId   String   @db.Uuid
+  senderId  String
+  message   String
+  createdAt DateTime @default(now())
+
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, createdAt])
+}
+
+model FraudFlag {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String
+  matchId   String   @db.Uuid
+  reason    String
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([matchId, createdAt])
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String
+  tokenHash   String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }

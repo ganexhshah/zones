@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
+import { getSystemSettings } from '@/lib/system-settings';
+import { sendPushToUser } from '@/lib/push';
 
 async function getWithdrawableWinningBalance(userId: string) {
   const [wins, completedWithdrawals, pendingWithdrawals] = await Promise.all([
     prisma.transaction.aggregate({
-      where: { userId, type: 'tournament_win', status: 'completed' },
+      where: {
+        userId,
+        type: { in: ['tournament_win'] },
+        status: 'completed',
+      },
       _sum: { amount: true },
     }),
     prisma.transaction.aggregate({
@@ -46,8 +52,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
     }
 
-    if (amount < 100) {
-      return NextResponse.json({ error: 'Minimum withdrawal is Rs 100' }, { status: 400 });
+    const settings = await getSystemSettings();
+    if (amount < settings.minWithdrawalAmount) {
+      return NextResponse.json(
+        { error: `Minimum withdrawal is Rs ${settings.minWithdrawalAmount.toFixed(0)}` },
+        { status: 400 }
+      );
     }
 
     const user = await prisma.user.findUnique({
@@ -111,6 +121,16 @@ export async function POST(req: NextRequest) {
         `
       );
     }
+
+    await sendPushToUser(user.id, {
+      title: 'Withdrawal Submitted',
+      body: `Your withdrawal request of Rs ${amount.toFixed(2)} is submitted for review.`,
+      data: {
+        type: 'withdrawal',
+        status: 'pending',
+        transactionId: transaction.id,
+      },
+    });
 
     return NextResponse.json({
       message: 'Withdrawal request submitted successfully',

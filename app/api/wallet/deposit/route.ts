@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { cloudinary } from '@/lib/cloudinary';
 import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
+import { getSystemSettings } from '@/lib/system-settings';
+import { sendPushToUser } from '@/lib/push';
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,11 +27,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
     }
 
-    if (amount < 10) {
-      return NextResponse.json({ error: 'Minimum deposit is ₹10' }, { status: 400 });
+    const settings = await getSystemSettings();
+    if (amount < settings.minDepositAmount) {
+      return NextResponse.json(
+        { error: `Minimum deposit is Rs ${settings.minDepositAmount.toFixed(0)}` },
+        { status: 400 }
+      );
     }
 
-    // Upload screenshot to Cloudinary
     const bytes = await screenshot.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const base64 = buffer.toString('base64');
@@ -39,50 +44,83 @@ export async function POST(req: NextRequest) {
       folder: 'payment_screenshots',
     });
 
-    // Create transaction
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId: payload.userId,
-        type: 'deposit',
-        amount,
-        method,
-        status: 'pending',
-        screenshot: uploadResult.secure_url,
-      },
+    const transaction = await prisma.$transaction(async (tx) => {
+      const created = await tx.transaction.create({
+        data: {
+          userId: payload.userId,
+          type: 'deposit',
+          amount,
+          method,
+          status: settings.autoApprovePayments ? 'completed' : 'pending',
+          screenshot: uploadResult.secure_url,
+        },
+      });
+
+      if (settings.autoApprovePayments) {
+        await tx.user.update({
+          where: { id: payload.userId },
+          data: {
+            walletBalance: {
+              increment: amount,
+            },
+          },
+        });
+      }
+
+      return created;
     });
 
-    // Get user details
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
       select: { email: true, name: true },
     });
 
-    // Send email notification
     if (user?.email) {
       await sendEmail(
         user.email,
-        'Payment Verification Pending',
+        settings.autoApprovePayments ? 'Payment Approved' : 'Payment Verification Pending',
         `
           <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>Payment Submitted Successfully</h2>
+            <h2>${settings.autoApprovePayments ? 'Payment Approved' : 'Payment Submitted Successfully'}</h2>
             <p>Hi ${user.name || 'User'},</p>
-            <p>Your payment request has been submitted and is pending verification.</p>
+            <p>${
+              settings.autoApprovePayments
+                ? 'Your payment has been automatically approved and added to your wallet.'
+                : 'Your payment request has been submitted and is pending verification.'
+            }</p>
             <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
-              <p><strong>Amount:</strong> ₹${amount}</p>
+              <p><strong>Amount:</strong> Rs ${amount}</p>
               <p><strong>Method:</strong> ${method}</p>
-              <p><strong>Status:</strong> Pending Verification</p>
+              <p><strong>Status:</strong> ${settings.autoApprovePayments ? 'Completed' : 'Pending Verification'}</p>
               <p><strong>Transaction ID:</strong> ${transaction.id}</p>
             </div>
-            <p>We will verify your payment within 24 hours and update your wallet balance.</p>
-            <p>You will receive another email once the payment is verified.</p>
+            ${
+              settings.autoApprovePayments
+                ? '<p>You can start using your updated balance immediately.</p>'
+                : '<p>We will verify your payment within 24 hours and update your wallet balance.</p><p>You will receive another email once the payment is verified.</p>'
+            }
           </div>
         `
       );
     }
 
-    return NextResponse.json({ 
+    await sendPushToUser(payload.userId, {
+      title: settings.autoApprovePayments ? 'Deposit Approved' : 'Deposit Submitted',
+      body: settings.autoApprovePayments
+        ? `Rs ${amount.toFixed(2)} added to your wallet.`
+        : `Your deposit of Rs ${amount.toFixed(2)} is under review.`,
+      data: {
+        type: 'deposit',
+        status: settings.autoApprovePayments ? 'completed' : 'pending',
+        transactionId: transaction.id,
+      },
+    });
+
+    return NextResponse.json({
       transaction,
-      message: 'Payment submitted successfully. Verification pending.' 
+      message: settings.autoApprovePayments
+        ? 'Payment approved and wallet updated successfully.'
+        : 'Payment submitted successfully. Verification pending.',
     });
   } catch (error) {
     console.error('Deposit error:', error);

@@ -26,9 +26,9 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    if (!/^\d{10}$/.test(gameId)) {
+    if (!/^\d{7,10}$/.test(gameId)) {
       return NextResponse.json(
-        { error: 'Game UID must be exactly 10 digits' },
+        { error: 'Game UID must be 7 to 10 digits' },
         { status: 400 },
       );
     }
@@ -72,4 +72,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuthPayload } from '@/lib/route-auth';
+import { sendPushToUser } from '@/lib/push';
 
 export async function POST(
   req: NextRequest,
@@ -50,6 +51,18 @@ export async function POST(
 
       return updatedPayout;
     });
+
+    if ((method || payout.method || 'wallet') === 'wallet') {
+      await sendPushToUser(payout.userId, {
+        title: 'Winnings Credited',
+        body: `Rs ${payout.amount.toFixed(2)} has been credited to your wallet.`,
+        data: {
+          type: 'winning',
+          status: 'completed',
+          payoutId: payout.id,
+        },
+      });
+    }
 
     return NextResponse.json({ payout: result, executedBy: auth.payload.userId });
   } catch (error) {

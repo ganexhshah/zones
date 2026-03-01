@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
+import { sendPushToUser } from '@/lib/push';
 
 export async function POST(req: NextRequest) {
   try {
@@ -84,6 +85,18 @@ export async function POST(req: NextRequest) {
 
       return participant;
     });
+
+    if (tournament.entryFee > 0) {
+      await sendPushToUser(payload.userId, {
+        title: 'Entry Fee Deducted',
+        body: `Rs ${tournament.entryFee.toFixed(2)} deducted for tournament entry.`,
+        data: {
+          type: 'tournament_entry',
+          status: 'completed',
+          tournamentId,
+        },
+      });
+    }
 
     return NextResponse.json({ participant: result });
   } catch (error: any) {

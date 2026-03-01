@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
+import { sendPushToUser } from '@/lib/push';
 
 export async function POST(req: NextRequest) {
   try {
@@ -84,6 +85,19 @@ export async function POST(req: NextRequest) {
         `
       );
     }
+
+    await sendPushToUser(userId, {
+      title: 'Admin Wallet Adjustment',
+      body:
+        numAmount > 0
+          ? `Admin credited Rs ${Math.abs(numAmount).toFixed(2)}.`
+          : `Admin debited Rs ${Math.abs(numAmount).toFixed(2)}.`,
+      data: {
+        type: numAmount > 0 ? 'admin_credit' : 'admin_debit',
+        status: 'completed',
+        transactionId: transaction.id,
+      },
+    });
 
     return NextResponse.json({
       user: updatedUser,

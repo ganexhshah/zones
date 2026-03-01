@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
+import { sendPushToUser } from '@/lib/push';
 
 export async function POST(
   req: NextRequest,
@@ -73,6 +74,18 @@ export async function POST(
         `
       );
     }
+
+    await sendPushToUser(transaction.userId, {
+      title: transaction.type === 'withdrawal' ? 'Withdrawal Rejected' : 'Deposit Rejected',
+      body: rejectNote
+        ? `Reason: ${rejectNote}`
+        : `${transaction.type === 'withdrawal' ? 'Withdrawal' : 'Deposit'} request was rejected.`,
+      data: {
+        type: transaction.type,
+        status: 'rejected',
+        transactionId: updatedTransaction.id,
+      },
+    });
 
     return NextResponse.json({ transaction: updatedTransaction });
   } catch (error) {
