@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 
@@ -6,6 +7,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const token = req.headers.get('authorization')?.replace('Bearer ', '');
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

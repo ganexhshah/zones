@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { requireAuthPayload } from '@/lib/route-auth';
 
@@ -7,9 +8,13 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const auth = requireAuthPayload(req);
-    if ('error' in auth) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
 
     const body = await req.json().catch(() => ({}));

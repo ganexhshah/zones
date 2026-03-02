@@ -1,7 +1,14 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+const JWT_SECRET = requireEnv('JWT_SECRET');
 
 export async function hashPassword(password: string) {
   return bcrypt.hash(password, 10);
@@ -17,7 +24,16 @@ export function generateToken(userId: string) {
 
 export function verifyToken(token: string) {
   try {
-    return jwt.verify(token, JWT_SECRET) as { userId: string };
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (
+      decoded &&
+      typeof decoded === 'object' &&
+      'userId' in decoded &&
+      typeof (decoded as { userId?: unknown }).userId === 'string'
+    ) {
+      return { userId: (decoded as { userId: string }).userId };
+    }
+    return null;
   } catch {
     return null;
   }

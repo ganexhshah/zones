@@ -9,8 +9,13 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireAdminUser(req);
-    if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json(
+        { error: adminAuth.error },
+        { status: adminAuth.status },
+      );
+    }
 
     const items = await prisma.broadcastNotification.findMany({
       orderBy: { createdAt: 'desc' },
@@ -31,8 +36,13 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireAdminUser(req);
-    if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json(
+        { error: adminAuth.error },
+        { status: adminAuth.status },
+      );
+    }
 
     const formData = await req.formData();
     const title = String(formData.get('title') || '').trim();
@@ -67,7 +77,7 @@ export async function POST(req: NextRequest) {
         type,
         bannerImageUrl,
         target: 'ALL',
-        createdByUserId: auth.user.id,
+        createdByUserId: adminAuth.user.id,
       },
     });
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
@@ -9,6 +10,10 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     let rejectNote = '';
     try {
       const body = await req.json();

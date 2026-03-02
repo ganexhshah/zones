@@ -22,6 +22,11 @@ type MatchLike = {
   createdAt: Date;
   creator?: { id: string; name: string | null; avatar: string | null };
   joiner?: { id: string; name: string | null; avatar: string | null } | null;
+  logs?: Array<{
+    createdAt: Date;
+    meta: unknown;
+    performer?: { id: string; name: string | null; avatar: string | null } | null;
+  }>;
 };
 
 function decimalToNumber(v: unknown): number {
@@ -34,6 +39,13 @@ function decimalToNumber(v: unknown): number {
 }
 
 export function toMatchResponse(match: MatchLike) {
+  const latestResultLog = Array.isArray(match.logs) && match.logs.length > 0
+    ? match.logs[0]
+    : null;
+  const resultMeta = latestResultLog?.meta && typeof latestResultLog.meta === 'object'
+    ? (latestResultLog.meta as Record<string, unknown>)
+    : null;
+
   return {
     id: match.id,
     gameName: match.gameName,
@@ -56,6 +68,28 @@ export function toMatchResponse(match: MatchLike) {
     createdAt: match.createdAt,
     creator: match.creator,
     joiner: match.joiner,
+    resultSubmission: latestResultLog
+      ? {
+          status:
+            typeof resultMeta?.status === 'string'
+              ? resultMeta.status
+              : 'SUBMITTED_FOR_VERIFICATION',
+          submittedAt: latestResultLog.createdAt,
+          submittedBy: latestResultLog.performer ?? null,
+          winnerUserId:
+            typeof resultMeta?.winnerUserId === 'string'
+              ? resultMeta.winnerUserId
+              : null,
+          note:
+            typeof resultMeta?.note === 'string'
+              ? resultMeta.note
+              : null,
+          proofUrl:
+            typeof resultMeta?.proofUrl === 'string'
+              ? resultMeta.proofUrl
+              : null,
+        }
+      : null,
   };
 }
 

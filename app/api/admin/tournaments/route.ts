@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 
@@ -10,6 +11,10 @@ function getAuthPayload(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const payload = getAuthPayload(req);
     if (!payload) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -66,6 +71,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const payload = getAuthPayload(req);
     if (!payload) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

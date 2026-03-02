@@ -8,7 +8,7 @@ import {
 
 import { prisma } from '@/lib/prisma';
 import { decryptText, encryptText } from '@/lib/match-v1/crypto';
-import { emitMatchAndUsers, emitToMatch, emitToUser } from '@/lib/match-v1/realtime';
+import { emitMatchAndUsers, emitToUser } from '@/lib/match-v1/realtime';
 import { sendPushToUser } from '@/lib/push';
 
 function toNumber(v: Prisma.Decimal | number | string | null | undefined) {
@@ -252,6 +252,14 @@ export async function listMatches(params: { status?: MatchStatus; limit: number 
       creator: { select: { id: true, name: true, avatar: true } },
       joiner: { select: { id: true, name: true, avatar: true } },
       joinRequests: { orderBy: { createdAt: 'desc' }, take: 1 },
+      logs: {
+        where: { action: 'RESULT_SUBMITTED' },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        include: {
+          performer: { select: { id: true, name: true, avatar: true } },
+        },
+      },
     },
   });
 }
@@ -917,6 +925,69 @@ export async function submitResult(params: {
   return { submitted: true };
 }
 
+export async function reportMatchIssue(params: {
+  matchId: string;
+  reportedBy: string;
+  reason: string;
+  details?: string;
+  proofUrl?: string;
+}) {
+  const result = await prisma.$transaction(async (tx) => {
+    await lockMatchRow(tx, params.matchId);
+    const match = await tx.match.findUniqueOrThrow({ where: { id: params.matchId } });
+
+    if (params.reportedBy !== match.creatorId && params.reportedBy !== match.joinerId) {
+      throw new Error('FORBIDDEN');
+    }
+
+    await tx.matchLog.create({
+      data: {
+        matchId: params.matchId,
+        action: 'MATCH_REPORTED',
+        performedBy: params.reportedBy,
+        meta: {
+          reason: params.reason,
+          details: params.details ?? null,
+          proofUrl: params.proofUrl ?? null,
+        },
+      },
+    });
+
+    return {
+      creatorId: match.creatorId,
+      joinerId: match.joinerId,
+      status: match.status,
+    };
+  });
+
+  if (result.joinerId) {
+    await Promise.allSettled([
+      notifyUser({
+        userId: result.creatorId,
+        title: 'Match Report Submitted',
+        body: 'A report was submitted for this custom match.',
+        data: {
+          event: 'match_reported_creator',
+          matchId: params.matchId,
+          status: result.status,
+        },
+      }),
+      notifyUser({
+        userId: result.joinerId,
+        title: 'Match Report Submitted',
+        body: 'A report was submitted for this custom match.',
+        data: {
+          event: 'match_reported_joiner',
+          matchId: params.matchId,
+          status: result.status,
+        },
+      }),
+    ]);
+  }
+
+  return { reported: true };
+}
+
 export async function verifyMatchAndPayout(params: {
   matchId: string;
   verifiedBy: string;
@@ -1080,31 +1151,41 @@ export async function listChatMessages(params: { matchId: string; requesterId: s
 }
 
 export async function sendChatMessage(params: { matchId: string; senderId: string; message: string }) {
-  const row = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await lockMatchRow(tx, params.matchId);
     const match = await tx.match.findUniqueOrThrow({ where: { id: params.matchId } });
 
     if (![match.creatorId, match.joinerId].includes(params.senderId)) throw new Error('FORBIDDEN');
     if (match.status !== MatchStatus.CONFIRMED) throw new Error('CHAT_DISABLED');
 
-    return tx.chatMessage.create({
+    const row = await tx.chatMessage.create({
       data: {
         matchId: params.matchId,
         senderId: params.senderId,
         message: params.message,
       },
     });
+    return {
+      row,
+      creatorId: match.creatorId,
+      joinerId: match.joinerId,
+    };
   });
 
-  emitToMatch(params.matchId, 'chat.message', {
+  const payload = {
     matchId: params.matchId,
     message: {
-      id: row.id,
-      senderId: row.senderId,
-      message: row.message,
-      createdAt: row.createdAt,
+      id: result.row.id,
+      senderId: result.row.senderId,
+      message: result.row.message,
+      createdAt: result.row.createdAt,
     },
-  });
+  };
 
-  return row;
+  emitToUser(result.creatorId, 'chat.message', payload);
+  if (result.joinerId) {
+    emitToUser(result.joinerId, 'chat.message', payload);
+  }
+
+  return result.row;
 }

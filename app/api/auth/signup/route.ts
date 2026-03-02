@@ -7,8 +7,6 @@ import { sendOTP } from '@/lib/email';
 export async function POST(req: NextRequest) {
   try {
     const { email, password, phone, name } = await req.json();
-    
-    console.log('Signup request for:', email, 'Name:', name);
 
     const existing = await prisma.user.findFirst({
       where: { 
@@ -20,8 +18,6 @@ export async function POST(req: NextRequest) {
     });
 
     if (existing) {
-      console.log('User already exists:', email);
-      
       // If user exists and is verified, they should login instead
       if (existing.isVerified) {
         return NextResponse.json(
@@ -29,19 +25,13 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      
-      // If user exists but not verified, allow resending OTP
-      console.log('User exists but not verified, resending OTP');
     }
 
     const otp = generateOTP();
-    console.log('Generated OTP for', email, ':', otp);
-    
-    await redis.setex(`otp:${email}`, 600, otp);
-    console.log('Stored OTP in Redis with key:', `otp:${email}`);
 
-    const emailResult = await sendOTP(email, otp);
-    console.log('Email send result:', emailResult);
+    await redis.setex(`otp:${email}`, 600, otp);
+
+    await sendOTP(email, otp);
 
     const hashedPassword = await hashPassword(password);
     await redis.setex(
@@ -49,8 +39,6 @@ export async function POST(req: NextRequest) {
       600,
       JSON.stringify({ email, password: hashedPassword, phone, name })
     );
-    
-    console.log('Signup data stored in Redis');
 
     return NextResponse.json({ 
       message: 'OTP sent to email',

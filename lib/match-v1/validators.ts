@@ -63,6 +63,12 @@ export const submitResultSchema = z.object({
   proofUrl: z.string().url().max(1000).optional(),
 });
 
+export const reportMatchSchema = z.object({
+  reason: z.string().min(3).max(200),
+  details: z.string().max(1000).optional(),
+  proofUrl: z.string().url().max(1000).optional(),
+});
+
 export const verifyResultSchema = z.object({
   winnerUserId: z.string().min(1),
   platformFeePercent: z.number().min(0).max(100).default(5),

@@ -33,6 +33,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    await prisma.gameId.upsert({
+      where: {
+        userId_gameName: {
+          userId: payload.userId,
+          gameName,
+        },
+      },
+      update: {
+        gameId,
+        inGameName,
+      },
+      create: {
+        userId: payload.userId,
+        gameName,
+        gameId,
+        inGameName,
+      },
+    });
+
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
       select: {
@@ -63,7 +82,14 @@ export async function POST(req: NextRequest) {
       await sendEmail(user.email, 'Profile Setup Complete - Crackzone', html);
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      profile: {
+        gameName,
+        gameId,
+        inGameName,
+      },
+    });
   } catch (error) {
     console.error('Profile setup completion error:', error);
     return NextResponse.json(

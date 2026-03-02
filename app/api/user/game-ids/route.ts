@@ -37,16 +37,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    const { gameName, gameId } = await req.json();
+    const { gameName, gameId, inGameName } = await req.json();
 
     const normalizedGameName = String(gameName || '').trim();
     const normalizedGameId = String(gameId || '').trim();
     if (!normalizedGameName) {
       return NextResponse.json({ error: 'Game name is required' }, { status: 400 });
     }
-    if (!/^\d{10}$/.test(normalizedGameId)) {
-      return NextResponse.json({ error: 'Game UID must be exactly 10 digits' }, { status: 400 });
+    if (!/^\d{7,10}$/.test(normalizedGameId)) {
+      return NextResponse.json({ error: 'Game UID must be 7 to 10 digits' }, { status: 400 });
     }
+    const normalizedInGameName = String(inGameName || '').trim();
 
     const newGameId = await prisma.gameId.upsert({
       where: {
@@ -55,11 +56,15 @@ export async function POST(req: NextRequest) {
           gameName: normalizedGameName,
         },
       },
-      update: { gameId: normalizedGameId },
+      update: {
+        gameId: normalizedGameId,
+        inGameName: normalizedInGameName || null,
+      },
       create: {
         userId: payload.userId,
         gameName: normalizedGameName,
         gameId: normalizedGameId,
+        inGameName: normalizedInGameName || null,
       },
     });
 

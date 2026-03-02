@@ -1,7 +1,15 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
-const ACCESS_SECRET = process.env.JWT_SECRET || 'fallback-secret';
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+const ACCESS_SECRET = requireEnv('JWT_SECRET');
+
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || ACCESS_SECRET;
 
 export function signAccessToken(userId: string) {

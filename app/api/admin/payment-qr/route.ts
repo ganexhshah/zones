@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { cloudinary } from '@/lib/cloudinary';
 
 // Get all payment QR codes
 export async function GET(req: NextRequest) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const qrCodes = await prisma.paymentQR.findMany({
       orderBy: { createdAt: 'desc' },
     });
@@ -19,6 +24,10 @@ export async function GET(req: NextRequest) {
 // Upload or update payment QR code
 export async function POST(req: NextRequest) {
   try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const formData = await req.formData();
     const method = (formData.get('method') as string)?.trim().toLowerCase();
     const qrImage = formData.get('qrImage') as File;

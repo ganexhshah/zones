@@ -6,9 +6,9 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireAdminUser(req);
-    if ('error' in auth) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
 
     const settings = await getSystemSettings();
@@ -21,9 +21,9 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const auth = await requireAdminUser(req);
-    if ('error' in auth) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
 
     const body = await req.json().catch(() => ({}));
