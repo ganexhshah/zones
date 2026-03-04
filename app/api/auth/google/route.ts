@@ -3,15 +3,30 @@ import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '@/lib/prisma';
 import { generateToken } from '@/lib/auth';
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+function getAllowedGoogleClientIds() {
+  const ids = [
+    ...(process.env.GOOGLE_CLIENT_IDS || '').split(','),
+    process.env.GOOGLE_CLIENT_ID || '',
+  ]
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(ids));
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const allowedClientIds = getAllowedGoogleClientIds();
+    if (allowedClientIds.length === 0) {
+      return NextResponse.json({ error: 'Google auth not configured' }, { status: 500 });
+    }
+
+    const client = new OAuth2Client(allowedClientIds[0]);
     const { idToken } = await req.json();
 
     const ticket = await client.verifyIdToken({
       idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: allowedClientIds,
     });
 
     const payload = ticket.getPayload();
