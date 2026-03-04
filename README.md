@@ -31,7 +31,7 @@ npx prisma migrate dev
 
 4. Start development server:
 ```bash
-npm run dev
+npm run dev:socket
 ```
 
 ## Build

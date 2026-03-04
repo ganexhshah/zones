@@ -1,0 +1,4 @@
+{
+  "framework": "nextjs",
+  "devCommand": "npm run dev:socket"
+}
