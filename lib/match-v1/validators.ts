@@ -57,6 +57,23 @@ export const submitRoomSchema = z.object({
   roomPassword: z.string().min(1).max(128),
 });
 
+export const reviewJoinRequestSchema = z.object({
+  action: z.enum(['accept', 'reject']),
+  roomId: z.string().min(1).max(128).optional(),
+  roomPassword: z.string().min(1).max(128).optional(),
+}).refine(
+  (data) => {
+    if (data.action === 'accept') {
+      return Boolean(data.roomId && data.roomPassword);
+    }
+    return true;
+  },
+  {
+    message: 'roomId and roomPassword are required when accepting',
+  }
+);
+
+
 export const submitResultSchema = z.object({
   winnerUserId: z.string().min(1),
   note: z.string().max(500).optional(),

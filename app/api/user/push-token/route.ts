@@ -47,6 +47,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ token: saved });
   } catch (error) {
     console.error('Save push token error:', error);
+    console.error('Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Failed to save push token' }, { status: 500 });
   }
 }

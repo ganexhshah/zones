@@ -41,6 +41,28 @@ export async function GET(req: NextRequest) {
           isVerified: true,
           isBlocked: true,
           createdAt: true,
+          pushTokens: {
+            where: { isActive: true },
+            select: {
+              deviceId: true,
+              updatedAt: true,
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+          },
+          fraudFlags: {
+            where: {
+              ip: {
+                not: null,
+              },
+            },
+            select: {
+              ip: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
           _count: {
             select: {
               transactions: true,
@@ -52,8 +74,18 @@ export async function GET(req: NextRequest) {
       prisma.user.count(),
     ]);
 
+    const normalizedUsers = users.map((user) => ({
+      ...user,
+      latestDeviceId: user.pushTokens[0]?.deviceId ?? null,
+      latestKnownIp: user.fraudFlags[0]?.ip ?? null,
+      latestDeviceSeenAt: user.pushTokens[0]?.updatedAt ?? null,
+      latestIpSeenAt: user.fraudFlags[0]?.createdAt ?? null,
+      pushTokens: undefined,
+      fraudFlags: undefined,
+    }));
+
     return NextResponse.json({
-      users,
+      users: normalizedUsers,
       pagination: {
         page,
         limit,

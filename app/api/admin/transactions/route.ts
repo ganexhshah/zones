@@ -25,11 +25,44 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
     const status = searchParams.get('status');
+    const type = searchParams.get('type');
+    const search = (searchParams.get('search') || '').trim();
     const skip = (page - 1) * limit;
 
     const where: any = {};
     if (status) {
       where.status = status;
+    }
+    if (type) {
+      const parsedTypes = type
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (parsedTypes.length === 1) {
+        where.type = parsedTypes[0];
+      } else if (parsedTypes.length > 1) {
+        where.type = { in: parsedTypes };
+      }
+    }
+    if (search) {
+      where.OR = [
+        { id: { contains: search, mode: 'insensitive' } },
+        { reference: { contains: search, mode: 'insensitive' } },
+        {
+          user: {
+            is: {
+              email: { contains: search, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          user: {
+            is: {
+              name: { contains: search, mode: 'insensitive' },
+            },
+          },
+        },
+      ];
     }
 
     const [transactions, total] = await Promise.all([

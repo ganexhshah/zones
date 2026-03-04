@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
     const matches = await listMatches({
       status: query.status,
       limit: query.limit,
+      requesterId: auth.user.id,
     });
 
     return ok({ matches: matches.map(toMatchResponse) });

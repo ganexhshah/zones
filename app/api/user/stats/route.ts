@@ -16,6 +16,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
+    console.log('Fetching stats for user:', payload.userId);
+
     const tournamentParticipations = await prisma.tournamentParticipant.findMany({
       where: { userId: payload.userId },
       include: {
@@ -35,6 +37,8 @@ export async function GET(req: NextRequest) {
       take: 30,
     });
 
+    console.log('Tournament participations fetched:', tournamentParticipations.length);
+
     const transactions = await prisma.transaction.findMany({
       where: {
         userId: payload.userId,
@@ -43,6 +47,8 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    console.log('Transactions fetched:', transactions.length);
 
     const totalMatches = tournamentParticipations.length;
     const wins = transactions.length;
@@ -79,6 +85,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ stats });
   } catch (error) {
     console.error('Stats fetch error:', error);
+    console.error('Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
   }
 }

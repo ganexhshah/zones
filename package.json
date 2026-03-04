@@ -5,10 +5,10 @@
   "scripts": {
     "dev": "next dev -p 3001 -H 0.0.0.0",
     "predev:socket": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
-    "dev:socket": "node server/socket-server.mjs",
+    "dev:socket": "node --env-file=.env server/socket-server.mjs",
     "build": "next build",
     "start": "next start -p 3001 -H 0.0.0.0",
-    "start:socket": "cross-env NODE_ENV=production node server/socket-server.mjs",
+    "start:socket": "cross-env NODE_ENV=production node --env-file=.env server/socket-server.mjs",
     "worker:match-timeout": "tsx workers/match-timeout-worker.ts",
     "worker:match-timeout:bullmq": "tsx workers/match-timeout-bullmq.ts",
     "postinstall": "prisma generate",

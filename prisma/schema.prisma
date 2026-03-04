@@ -54,6 +54,8 @@ model User {
   fraudFlags FraudFlag[]
   refreshTokens RefreshToken[]
   matchLogs MatchLog[] @relation("PerformedBy")
+  resultClaimsSubmitted MatchResultClaim[] @relation("ResultClaimSubmitter")
+  resultClaimsAsWinner MatchResultClaim[] @relation("ResultClaimWinner")
 }
 
 enum MatchStatus {
@@ -578,6 +580,7 @@ model Match {
   escrows           Escrow[]
   walletLedger      WalletLedger[]
   logs              MatchLog[]
+  resultClaims      MatchResultClaim[] @relation("MatchResultClaims")
   chatMessages      ChatMessage[]
   fraudFlags        FraudFlag[]
 
@@ -641,6 +644,26 @@ model MatchLog {
   performer   User?    @relation("PerformedBy", fields: [performedBy], references: [id], onDelete: SetNull)
 
   @@index([matchId, createdAt])
+}
+
+model MatchResultClaim {
+  id              String   @id @default(uuid()) @db.Uuid
+  matchId         String   @db.Uuid
+  submittedBy     String
+  claimedWinnerId String
+  proofUrl        String?
+  note            String?
+  status          String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  rejectionReason String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  match           Match    @relation("MatchResultClaims", fields: [matchId], references: [id], onDelete: Cascade)
+  submitter       User     @relation("ResultClaimSubmitter", fields: [submittedBy], references: [id], onDelete: Cascade)
+  claimedWinner   User     @relation("ResultClaimWinner", fields: [claimedWinnerId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, submittedBy])
+  @@unique([matchId, submittedBy])
 }
 
 model ChatMessage {

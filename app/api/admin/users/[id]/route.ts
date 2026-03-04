@@ -62,6 +62,30 @@ export async function GET(
             createdAt: true,
           },
         },
+        pushTokens: {
+          where: { isActive: true },
+          select: {
+            deviceId: true,
+            platform: true,
+            updatedAt: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 5,
+        },
+        fraudFlags: {
+          where: {
+            ip: {
+              not: null,
+            },
+          },
+          select: {
+            ip: true,
+            reason: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
       },
     });
 
@@ -72,6 +96,10 @@ export async function GET(
     return NextResponse.json({
       ...user,
       recentTransactions: user.transactions,
+      latestDeviceId: user.pushTokens[0]?.deviceId ?? null,
+      latestKnownIp: user.fraudFlags[0]?.ip ?? null,
+      securityDevices: user.pushTokens,
+      securityIps: user.fraudFlags,
     });
   } catch (error) {
     console.error('Get user details error:', error);

@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma';
 import { decryptText, encryptText } from '@/lib/match-v1/crypto';
 import { emitMatchAndUsers, emitToUser } from '@/lib/match-v1/realtime';
 import { sendPushToUser } from '@/lib/push';
+import { getAdminEmailRecipients, sendEmail, sendEmailMany } from '@/lib/email';
 
 function toNumber(v: Prisma.Decimal | number | string | null | undefined) {
   if (v == null) return 0;
@@ -243,9 +244,20 @@ export async function createMatch(params: {
   return match;
 }
 
-export async function listMatches(params: { status?: MatchStatus; limit: number }) {
-  return prisma.match.findMany({
-    where: params.status ? { status: params.status } : undefined,
+export async function listMatches(params: { status?: MatchStatus; limit: number; requesterId: string }) {
+  const visibilityWhere: Prisma.MatchWhereInput = {
+    OR: [
+      { creatorId: params.requesterId },
+      { joinerId: params.requesterId },
+      { status: MatchStatus.OPEN },
+    ],
+  };
+  const where: Prisma.MatchWhereInput = params.status
+    ? { AND: [visibilityWhere, { status: params.status }] }
+    : visibilityWhere;
+
+  const rows = await prisma.match.findMany({
+    where,
     orderBy: { createdAt: 'desc' },
     take: params.limit,
     include: {
@@ -262,6 +274,40 @@ export async function listMatches(params: { status?: MatchStatus; limit: number 
       },
     },
   });
+
+  return rows.map((match) => {
+    const roomVisible = canViewRoom(params.requesterId, match);
+    if (!roomVisible || !match.roomIdEncrypted || !match.roomPassEncrypted) {
+      return {
+        ...match,
+        roomIdMasked: null,
+        roomPasswordMasked: null,
+      };
+    }
+
+    try {
+      const roomId = decryptText(match.roomIdEncrypted);
+      const roomPassword = decryptText(match.roomPassEncrypted);
+      return {
+        ...match,
+        // Return full credentials to participants, not masked
+        roomIdMasked: roomId,
+        roomPasswordMasked: roomPassword,
+      };
+    } catch (error) {
+      console.error('Failed to decrypt room credentials for match list:', {
+        matchId: match.id,
+        requesterId: params.requesterId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return {
+      ...match,
+      roomIdMasked: null,
+      roomPasswordMasked: null,
+    };
+  });
 }
 
 export async function getMatchDetails(matchId: string, requesterId: string) {
@@ -272,6 +318,13 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
       joiner: { select: { id: true, name: true, avatar: true } },
       joinRequests: { orderBy: { createdAt: 'desc' } },
       escrows: { orderBy: { createdAt: 'desc' }, take: 1 },
+      resultClaims: {
+        include: {
+          submitter: { select: { id: true, name: true, avatar: true } },
+          claimedWinner: { select: { id: true, name: true, avatar: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
       logs: {
         where: { action: { in: ['RESULT_SUBMITTED', 'MATCH_COMPLETED'] } },
         orderBy: { createdAt: 'desc' },
@@ -284,14 +337,28 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
   });
 
   if (!match) return null;
+  const isParticipant = requesterId === match.creatorId || requesterId === match.joinerId;
+  if (!isParticipant && match.status !== MatchStatus.OPEN) {
+    throw new Error('FORBIDDEN');
+  }
 
   const roomVisible = canViewRoom(requesterId, match);
   let roomId: string | null = null;
   let roomPassword: string | null = null;
 
   if (roomVisible && match.roomIdEncrypted && match.roomPassEncrypted) {
-    roomId = decryptText(match.roomIdEncrypted);
-    roomPassword = decryptText(match.roomPassEncrypted);
+    try {
+      roomId = decryptText(match.roomIdEncrypted);
+      roomPassword = decryptText(match.roomPassEncrypted);
+    } catch (error) {
+      console.error('Failed to decrypt room credentials for match details:', {
+        matchId,
+        requesterId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      roomId = null;
+      roomPassword = null;
+    }
   }
 
   const latestSubmissionLog = match.logs.find((log) => log.action === 'RESULT_SUBMITTED');
@@ -345,10 +412,12 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
     ...match,
     roomId,
     roomPassword,
-    roomIdMasked: match.roomIdEncrypted ? maskCredential(roomId ?? '') : null,
-    roomPasswordMasked: match.roomPassEncrypted ? maskCredential(roomPassword ?? '') : null,
+    // Return full credentials to participants, not masked
+    roomIdMasked: roomId,
+    roomPasswordMasked: roomPassword,
     resultSubmission,
     completion,
+    resultClaims: match.resultClaims || [],
   };
 }
 
@@ -661,6 +730,112 @@ export async function rejectJoinRequest(params: { matchId: string; creatorId: st
   return result;
 }
 
+export async function acceptJoinRequestWithRoom(params: {
+  matchId: string;
+  creatorId: string;
+  roomId: string;
+  roomPassword: string;
+}) {
+  const { matchId, creatorId, roomId, roomPassword } = params;
+
+  const result = await prisma.$transaction(async (tx) => {
+    await lockMatchRow(tx, matchId);
+    const match = await tx.match.findUniqueOrThrow({ where: { id: matchId } });
+
+    if (match.creatorId !== creatorId) throw new Error('FORBIDDEN');
+    if (match.status !== MatchStatus.PENDING_APPROVAL) throw new Error('INVALID_STATUS');
+    if (!match.joinerId) throw new Error('NO_JOINER');
+
+    const joinRequest = await tx.joinRequest.findFirst({
+      where: { matchId, joinerId: match.joinerId, status: JoinRequestStatus.PENDING },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!joinRequest) throw new Error('NO_PENDING_REQUEST');
+
+    await tx.joinRequest.update({
+      where: { id: joinRequest.id },
+      data: { status: JoinRequestStatus.ACCEPTED },
+    });
+
+    const updated = await tx.match.update({
+      where: { id: matchId },
+      data: {
+        status: MatchStatus.CONFIRMED,
+        expiresAt: null,
+        roomIdEncrypted: encryptText(roomId),
+        roomPassEncrypted: encryptText(roomPassword),
+      },
+    });
+
+    const existingEscrow = await tx.escrow.findFirst({ where: { matchId, status: EscrowStatus.LOCKED } });
+    const total = new Prisma.Decimal(match.entryFee).mul(2);
+
+    if (!existingEscrow) {
+      await tx.escrow.create({
+        data: { matchId, totalAmount: total, status: EscrowStatus.LOCKED },
+      });
+    }
+
+    await tx.matchLog.create({
+      data: {
+        matchId,
+        action: 'JOIN_REQUEST_ACCEPTED',
+        performedBy: creatorId,
+        meta: { joinRequestId: joinRequest.id },
+      },
+    });
+
+    await tx.matchLog.create({
+      data: {
+        matchId,
+        action: 'ROOM_SUBMITTED',
+        performedBy: creatorId,
+      },
+    });
+
+    return { updated, joinerId: match.joinerId };
+  });
+
+  emitMatchAndUsers({
+    matchId,
+    userIds: [creatorId, result.joinerId],
+    event: 'match.room_ready',
+    payload: {
+      matchId,
+      status: MatchStatus.CONFIRMED,
+      // Send full credentials to participants, not masked
+      roomIdMasked: roomId,
+      roomPasswordMasked: roomPassword,
+    },
+  });
+
+  await Promise.allSettled([
+    notifyUser({
+      userId: creatorId,
+      title: 'Match Confirmed',
+      body: 'Join request accepted and room details shared.',
+      data: {
+        event: 'match_confirmed_creator',
+        matchId,
+        status: MatchStatus.CONFIRMED,
+      },
+    }),
+    notifyUser({
+      userId: result.joinerId,
+      title: 'Match Ready',
+      body: 'Your request was accepted. Room details are now available.',
+      data: {
+        event: 'match_confirmed_joiner',
+        matchId,
+        status: MatchStatus.CONFIRMED,
+      },
+    }),
+  ]);
+
+  return result;
+}
+
+
 export async function cancelMatch(params: { matchId: string; creatorId: string }) {
   const { matchId, creatorId } = params;
   const result = await prisma.$transaction(async (tx) => {
@@ -835,8 +1010,9 @@ export async function submitRoom(params: {
       payload: {
         matchId: params.matchId,
         status: MatchStatus.CONFIRMED,
-        roomIdMasked: maskCredential(params.roomId),
-        roomPasswordMasked: maskCredential(params.roomPassword),
+        // Send full credentials to participants, not masked
+        roomIdMasked: params.roomId,
+        roomPasswordMasked: params.roomPassword,
       },
     });
 
@@ -883,6 +1059,32 @@ export async function submitResult(params: {
       throw new Error('FORBIDDEN');
     }
 
+    // Create or update result claim
+    await tx.matchResultClaim.upsert({
+      where: {
+        matchId_submittedBy: {
+          matchId: params.matchId,
+          submittedBy: params.submittedBy,
+        },
+      },
+      create: {
+        matchId: params.matchId,
+        submittedBy: params.submittedBy,
+        claimedWinnerId: params.winnerUserId,
+        proofUrl: params.proofUrl ?? null,
+        note: params.note ?? null,
+        status: 'PENDING',
+      },
+      update: {
+        claimedWinnerId: params.winnerUserId,
+        proofUrl: params.proofUrl ?? null,
+        note: params.note ?? null,
+        status: 'PENDING',
+        rejectionReason: null,
+      },
+    });
+
+    // Also create a log entry for backwards compatibility
     await tx.matchLog.create({
       data: {
         matchId: params.matchId,
@@ -934,7 +1136,18 @@ export async function reportMatchIssue(params: {
 }) {
   const result = await prisma.$transaction(async (tx) => {
     await lockMatchRow(tx, params.matchId);
-    const match = await tx.match.findUniqueOrThrow({ where: { id: params.matchId } });
+    const match = await tx.match.findUniqueOrThrow({
+      where: { id: params.matchId },
+      include: {
+        creator: { select: { id: true, name: true, email: true } },
+        joiner: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    const reporter = await tx.user.findUnique({
+      where: { id: params.reportedBy },
+      select: { id: true, name: true, email: true },
+    });
 
     if (params.reportedBy !== match.creatorId && params.reportedBy !== match.joinerId) {
       throw new Error('FORBIDDEN');
@@ -946,6 +1159,7 @@ export async function reportMatchIssue(params: {
         action: 'MATCH_REPORTED',
         performedBy: params.reportedBy,
         meta: {
+          status: 'SUBMITTED',
           reason: params.reason,
           details: params.details ?? null,
           proofUrl: params.proofUrl ?? null,
@@ -957,6 +1171,11 @@ export async function reportMatchIssue(params: {
       creatorId: match.creatorId,
       joinerId: match.joinerId,
       status: match.status,
+      gameName: match.gameName,
+      reporterName: reporter?.name ?? 'Player',
+      reporterEmail: reporter?.email ?? '',
+      creatorEmail: match.creator.email ?? '',
+      joinerEmail: match.joiner?.email ?? '',
     };
   });
 
@@ -983,6 +1202,42 @@ export async function reportMatchIssue(params: {
         },
       }),
     ]);
+  }
+
+  const shortMatchId = params.matchId.length > 10 ? params.matchId.slice(0, 10) : params.matchId;
+  if (result.reporterEmail) {
+    await sendEmail(
+      result.reporterEmail,
+      'Custom Match Report Received - Crackzone',
+      `
+      <div style="font-family: Arial, sans-serif; padding: 16px;">
+        <h2>Report submitted</h2>
+        <p>Hello ${result.reporterName},</p>
+        <p>We received your custom match report.</p>
+        <p><strong>Match:</strong> ${result.gameName} (${shortMatchId})</p>
+        <p><strong>Reason:</strong> ${params.reason}</p>
+        <p>Our team will review and update the report status.</p>
+      </div>
+      `,
+    );
+  }
+
+  const adminEmails = getAdminEmailRecipients();
+  if (adminEmails.length > 0) {
+    await sendEmailMany(
+      adminEmails,
+      'New Custom Match Report Submitted',
+      `
+      <div style="font-family: Arial, sans-serif; padding: 16px;">
+        <h2>New custom match report</h2>
+        <p><strong>Reporter:</strong> ${result.reporterName}</p>
+        <p><strong>Match ID:</strong> ${params.matchId}</p>
+        <p><strong>Game:</strong> ${result.gameName}</p>
+        <p><strong>Reason:</strong> ${params.reason}</p>
+        <p><strong>Details:</strong> ${params.details ?? 'N/A'}</p>
+      </div>
+      `,
+    );
   }
 
   return { reported: true };

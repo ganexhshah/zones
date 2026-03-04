@@ -22,6 +22,8 @@ type MatchLike = {
   createdAt: Date;
   creator?: { id: string; name: string | null; avatar: string | null };
   joiner?: { id: string; name: string | null; avatar: string | null } | null;
+  roomIdMasked?: string | null;
+  roomPasswordMasked?: string | null;
   logs?: Array<{
     createdAt: Date;
     meta: unknown;
@@ -68,6 +70,8 @@ export function toMatchResponse(match: MatchLike) {
     createdAt: match.createdAt,
     creator: match.creator,
     joiner: match.joiner,
+    roomIdMasked: match.roomIdMasked ?? null,
+    roomPasswordMasked: match.roomPasswordMasked ?? null,
     resultSubmission: latestResultLog
       ? {
           status:

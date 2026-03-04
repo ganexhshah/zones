@@ -36,6 +36,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ notifications });
   } catch (error) {
     console.error('Notifications list error:', error);
+    console.error('Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Failed to fetch notifications' }, { status: 500 });
   }
 }

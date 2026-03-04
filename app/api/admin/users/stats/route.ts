@@ -21,12 +21,49 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
+    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
     // Get total counts
-    const [totalUsers, activeUsers, verifiedUsers, blockedUsers] = await Promise.all([
+    const [totalUsers, activeUsers, verifiedUsers, blockedUsers, lastDaySignups, recentSignupsRaw] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { isBlocked: false } }),
       prisma.user.count({ where: { isVerified: true } }),
       prisma.user.count({ where: { isBlocked: true } }),
+      prisma.user.count({ where: { createdAt: { gte: last24Hours } } }),
+      prisma.user.findMany({
+        where: { createdAt: { gte: last24Hours } },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          createdAt: true,
+          pushTokens: {
+            where: { isActive: true },
+            select: {
+              deviceId: true,
+              updatedAt: true,
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+          },
+          fraudFlags: {
+            where: {
+              ip: {
+                not: null,
+              },
+            },
+            select: {
+              ip: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      }),
     ]);
 
     // Get user growth for last 7 days
@@ -51,11 +88,25 @@ export async function GET(req: NextRequest) {
       { name: 'Blocked', value: blockedUsers, color: '#ef4444' },
     ];
 
+    const recentSignups = recentSignupsRaw.map((user) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      createdAt: user.createdAt,
+      latestDeviceId: user.pushTokens[0]?.deviceId ?? null,
+      latestDeviceSeenAt: user.pushTokens[0]?.updatedAt ?? null,
+      latestKnownIp: user.fraudFlags[0]?.ip ?? null,
+      latestIpSeenAt: user.fraudFlags[0]?.createdAt ?? null,
+    }));
+
     return NextResponse.json({
       totalUsers,
       activeUsers,
       verifiedUsers,
       blockedUsers,
+      lastDaySignups,
+      recentSignups,
       userGrowth: userGrowth.length > 0 ? userGrowth : [
         { date: 'Mon 01', users: 0 },
         { date: 'Tue 02', users: 0 },

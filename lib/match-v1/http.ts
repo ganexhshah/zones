@@ -10,6 +10,14 @@ export function fail(message: string, status = 400, meta?: unknown) {
 }
 
 export function handleApiError(error: unknown) {
+  const maybeDigest =
+    error && typeof error === 'object' && 'digest' in error
+      ? (error as { digest?: unknown }).digest
+      : undefined;
+  if (maybeDigest !== 'DYNAMIC_SERVER_USAGE') {
+    console.error('Match v1 API error:', error);
+  }
+
   if (error instanceof ZodError) {
     return fail('Validation failed', 400, error.flatten());
   }

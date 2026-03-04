@@ -3,13 +3,13 @@ import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
 
-function isAuthorized(req: NextRequest) {
+function getAuthPayload(req: NextRequest) {
   const token = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (!token) return false;
-  return Boolean(verifyToken(token));
+  if (!token) return null;
+  return verifyToken(token);
 }
 
-export async function PUT(
+export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
@@ -18,153 +18,197 @@ export async function PUT(
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    if (!isAuthorized(req)) {
+    const payload = getAuthPayload(req);
+    if (!payload) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await req.json();
-    const title = String(body.title || '').trim();
-    const game = String(body.game || 'Free Fire').trim();
-    const mode = String(body.mode || 'SOLO').trim().toUpperCase();
-    const format = String(body.format || 'BR_LEAGUE').trim().toUpperCase();
-    const regionValue = String(body.region || '').trim();
-    const entryFee = Number(body.entryFee ?? 0);
-    const prizePool = Number(body.prizePool ?? 0);
-    const currency = String(body.currency || 'NPR').trim().toUpperCase();
-    const maxPlayers = Number(body.maxPlayers ?? 0);
-    const roomSizeRaw = body.roomSize;
-    const roomSize = roomSizeRaw === '' || roomSizeRaw == null ? null : Number(roomSizeRaw);
-    const startTime = body.startTime ? new Date(body.startTime) : null;
-    const registrationOpenAt = body.registrationOpenAt ? new Date(body.registrationOpenAt) : null;
-    const registrationCloseAt = body.registrationCloseAt ? new Date(body.registrationCloseAt) : null;
-    const checkinOpenAt = body.checkinOpenAt ? new Date(body.checkinOpenAt) : null;
-    const checkinCloseAt = body.checkinCloseAt ? new Date(body.checkinCloseAt) : null;
-    const rulesTextValue = String(body.rulesText || '').trim();
-    let scoringConfigValue: any = null;
-    if (typeof body.scoringConfig === 'string') {
-      const trimmed = body.scoringConfig.trim();
-      scoringConfigValue = trimmed ? JSON.parse(trimmed) : null;
-    } else if (body.scoringConfig && typeof body.scoringConfig === 'object') {
-      scoringConfigValue = body.scoringConfig;
-    }
-    const proofRequired = body.proofRequired === undefined ? true : Boolean(body.proofRequired);
-    const disputeWindowMinutes = Number(body.disputeWindowMinutes ?? 15);
-    const refundRulesValue = String(body.refundRules || '').trim();
-    const status = String(body.status || 'upcoming').trim().toLowerCase();
-    const imageUrlValue = String(body.imageUrl || '').trim();
+    const tournamentId = params.id;
 
-    if (!title) {
-      return NextResponse.json({ error: 'Title is required' }, { status: 400 });
-    }
-    if (!game) {
-      return NextResponse.json({ error: 'Game is required' }, { status: 400 });
-    }
-    if (!Number.isFinite(entryFee) || entryFee < 0) {
-      return NextResponse.json({ error: 'Invalid entry fee' }, { status: 400 });
-    }
-    if (!Number.isFinite(prizePool) || prizePool < 0) {
-      return NextResponse.json({ error: 'Invalid prize pool' }, { status: 400 });
-    }
-    if (!Number.isInteger(maxPlayers) || maxPlayers <= 0) {
-      return NextResponse.json({ error: 'Max players must be a positive integer' }, { status: 400 });
-    }
-    if (roomSize !== null && (!Number.isInteger(roomSize) || roomSize <= 0)) {
-      return NextResponse.json({ error: 'Room size must be a positive integer' }, { status: 400 });
-    }
-    if (!startTime || Number.isNaN(startTime.getTime())) {
-      return NextResponse.json({ error: 'Invalid start time' }, { status: 400 });
-    }
-    if (registrationOpenAt && Number.isNaN(registrationOpenAt.getTime())) {
-      return NextResponse.json({ error: 'Invalid registration open time' }, { status: 400 });
-    }
-    if (registrationCloseAt && Number.isNaN(registrationCloseAt.getTime())) {
-      return NextResponse.json({ error: 'Invalid registration close time' }, { status: 400 });
-    }
-    if (checkinOpenAt && Number.isNaN(checkinOpenAt.getTime())) {
-      return NextResponse.json({ error: 'Invalid check-in open time' }, { status: 400 });
-    }
-    if (checkinCloseAt && Number.isNaN(checkinCloseAt.getTime())) {
-      return NextResponse.json({ error: 'Invalid check-in close time' }, { status: 400 });
-    }
-    if (!Number.isInteger(disputeWindowMinutes) || disputeWindowMinutes < 0) {
-      return NextResponse.json({ error: 'Invalid dispute window minutes' }, { status: 400 });
-    }
-
-    const tournament = await prisma.tournament.update({
-      where: { id: params.id },
-      data: {
-        title,
-        game,
-        mode,
-        format,
-        region: regionValue || null,
-        entryFee,
-        prizePool,
-        currency,
-        maxPlayers,
-        roomSize,
-        startTime,
-        registrationOpenAt,
-        registrationCloseAt,
-        checkinOpenAt,
-        checkinCloseAt,
-        rulesText: rulesTextValue || null,
-        scoringConfig: scoringConfigValue,
-        proofRequired,
-        disputeWindowMinutes,
-        refundRules: refundRulesValue || null,
-        status,
-        imageUrl: imageUrlValue || null,
+    const tournament = await prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      include: {
+        participants: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true,
+                email: true,
+              },
+            },
+          },
+          orderBy: {
+            joinedAt: 'asc',
+          },
+        },
       },
     });
+
+    if (!tournament) {
+      return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
+    }
+
+    const activeOrUpcomingMatch = await prisma.tournamentMatch.findFirst({
+      where: {
+        tournamentId,
+        status: { in: ['LIVE', 'SCHEDULED'] },
+      },
+      orderBy: [
+        { roundNo: 'asc' },
+        { matchIndex: 'asc' },
+        { createdAt: 'asc' },
+      ],
+    });
+
+    const fallbackMatchWithRoom = activeOrUpcomingMatch
+      ? null
+      : await prisma.tournamentMatch.findFirst({
+          where: {
+            tournamentId,
+            OR: [{ roomId: { not: null } }, { roomPass: { not: null } }],
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+    const roomSourceMatch = activeOrUpcomingMatch ?? fallbackMatchWithRoom;
+
+    return NextResponse.json({
+      tournament: {
+        ...tournament,
+        roomId: roomSourceMatch?.roomId ?? null,
+        roomPassword: roomSourceMatch?.roomPass ?? null,
+        currentPlayers: tournament.participants.length,
+      },
+    });
+  } catch (error) {
+    console.error('Get tournament details error:', error);
+    return NextResponse.json({ error: 'Failed to fetch tournament details' }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const adminAuth = await requireAdminUser(req);
+    if ('error' in adminAuth) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
+    const payload = getAuthPayload(req);
+    if (!payload) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const tournamentId = params.id;
+    const body = await req.json();
+
+    const updateData: any = {};
+    const shouldUpdateRoom =
+      body.roomId !== undefined || body.roomPassword !== undefined;
+    const normalizedRoomId =
+      body.roomId !== undefined
+        ? body.roomId
+          ? String(body.roomId).trim()
+          : null
+        : undefined;
+    const normalizedRoomPass =
+      body.roomPassword !== undefined
+        ? body.roomPassword
+          ? String(body.roomPassword).trim()
+          : null
+        : undefined;
+
+    if (body.status !== undefined) {
+      updateData.status = String(body.status).trim().toLowerCase();
+    }
+
+    if (body.title !== undefined) {
+      updateData.title = String(body.title).trim();
+    }
+
+    if (body.entryFee !== undefined) {
+      updateData.entryFee = Number(body.entryFee);
+    }
+
+    if (body.prizePool !== undefined) {
+      updateData.prizePool = Number(body.prizePool);
+    }
+
+    if (body.maxPlayers !== undefined) {
+      updateData.maxPlayers = Number(body.maxPlayers);
+    }
+
+    if (body.startTime !== undefined) {
+      updateData.startTime = new Date(body.startTime);
+    }
+
+    const tournamentExists = await prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { id: true, startTime: true, status: true },
+    });
+    if (!tournamentExists) {
+      return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
+    }
+
+    if (shouldUpdateRoom) {
+      const targetMatch =
+        await prisma.tournamentMatch.findFirst({
+          where: {
+            tournamentId,
+            status: { in: ['LIVE', 'SCHEDULED'] },
+          },
+          orderBy: [
+            { roundNo: 'asc' },
+            { matchIndex: 'asc' },
+            { createdAt: 'asc' },
+          ],
+        }) ??
+        await prisma.tournamentMatch.findFirst({
+          where: { tournamentId },
+          orderBy: { createdAt: 'desc' },
+        });
+
+      if (targetMatch) {
+        await prisma.tournamentMatch.update({
+          where: { id: targetMatch.id },
+          data: {
+            ...(normalizedRoomId !== undefined ? { roomId: normalizedRoomId } : {}),
+            ...(normalizedRoomPass !== undefined ? { roomPass: normalizedRoomPass } : {}),
+          },
+        });
+      } else {
+        await prisma.tournamentMatch.create({
+          data: {
+            tournamentId,
+            roundNo: 1,
+            matchIndex: 1,
+            status:
+              tournamentExists.status.toLowerCase() === 'live' ? 'LIVE' : 'SCHEDULED',
+            scheduledAt: tournamentExists.startTime ?? new Date(),
+            roomId: normalizedRoomId ?? null,
+            roomPass: normalizedRoomPass ?? null,
+          },
+        });
+      }
+    }
+
+    const tournament =
+      Object.keys(updateData).length > 0
+        ? await prisma.tournament.update({
+            where: { id: tournamentId },
+            data: updateData,
+          })
+        : await prisma.tournament.findUniqueOrThrow({ where: { id: tournamentId } });
 
     return NextResponse.json({ tournament });
   } catch (error: any) {
     console.error('Update tournament error:', error);
-    if (error instanceof SyntaxError) {
-      return NextResponse.json({ error: 'Invalid scoring JSON' }, { status: 400 });
-    }
-    if (error?.code === 'P2025') {
+    if (error.code === 'P2025') {
       return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
     }
     return NextResponse.json({ error: 'Failed to update tournament' }, { status: 500 });
-  }
-}
-
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const adminAuth = await requireAdminUser(req);
-    if ('error' in adminAuth) {
-      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
-    }
-    if (!isAuthorized(req)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const participantCount = await prisma.tournamentParticipant.count({
-      where: { tournamentId: params.id },
-    });
-
-    if (participantCount > 0) {
-      return NextResponse.json(
-        { error: 'Cannot delete tournament with participants. Mark it cancelled instead.' },
-        { status: 400 }
-      );
-    }
-
-    await prisma.tournament.delete({
-      where: { id: params.id },
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error('Delete tournament error:', error);
-    if (error?.code === 'P2025') {
-      return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
-    }
-    return NextResponse.json({ error: 'Failed to delete tournament' }, { status: 500 });
   }
 }
