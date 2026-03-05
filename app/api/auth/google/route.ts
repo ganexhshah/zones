@@ -23,14 +23,40 @@ export async function POST(req: NextRequest) {
     }
 
     const client = new OAuth2Client(allowedClientIds[0]);
-    const { idToken } = await req.json();
+    const { idToken, accessToken } = await req.json();
 
-    const ticket = await client.verifyIdToken({
-      idToken,
-      audience: allowedClientIds,
-    });
+    let payload:
+      | {
+          email?: string;
+          name?: string;
+          picture?: string;
+          sub?: string;
+        }
+      | undefined;
 
-    const payload = ticket.getPayload();
+    if (typeof idToken === 'string' && idToken.trim().length > 0) {
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: allowedClientIds,
+      });
+      payload = ticket.getPayload();
+    } else if (typeof accessToken === 'string' && accessToken.trim().length > 0) {
+      const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!userInfoRes.ok) {
+        return NextResponse.json({ error: 'Invalid Google access token' }, { status: 401 });
+      }
+      payload = (await userInfoRes.json()) as {
+        email?: string;
+        name?: string;
+        picture?: string;
+        sub?: string;
+      };
+    }
+
     if (!payload || !payload.email) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 400 });
     }
