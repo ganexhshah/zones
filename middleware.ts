@@ -1,9 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://crackzone-472dd.web.app',
+  'https://crackzones.xyz',
+  'https://www.crackzones.xyz',
+  'https://cash.crackzones.xyz',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:8081',
+  'http://127.0.0.1:8081',
+];
+
+function normalizeOrigin(value: string) {
+  return value.trim().replace(/\/+$/, '');
+}
+
 function getAllowedOrigins() {
   const raw = process.env.CORS_ORIGIN;
-  if (!raw) return ['*'];
-  return raw.split(',').map((v) => v.trim()).filter(Boolean);
+  if (!raw) return DEFAULT_ALLOWED_ORIGINS;
+  const parsed = raw
+    .split(',')
+    .map((v) => normalizeOrigin(v))
+    .filter(Boolean);
+  return parsed.length ? parsed : DEFAULT_ALLOWED_ORIGINS;
 }
 
 export function middleware(req: NextRequest) {
@@ -12,9 +31,11 @@ export function middleware(req: NextRequest) {
   }
 
   const response = NextResponse.next();
-  const origin = req.headers.get('origin') ?? '*';
+  const originHeader = req.headers.get('origin');
+  const origin = originHeader ? normalizeOrigin(originHeader) : '';
   const allowedOrigins = getAllowedOrigins();
-  const allowOrigin = allowedOrigins.includes('*') || allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? '*';
+  const isAllowed = origin && (allowedOrigins.includes('*') || allowedOrigins.includes(origin));
+  const allowOrigin = isAllowed ? origin : allowedOrigins[0] ?? DEFAULT_ALLOWED_ORIGINS[0];
 
   response.headers.set('Access-Control-Allow-Origin', allowOrigin);
   response.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
