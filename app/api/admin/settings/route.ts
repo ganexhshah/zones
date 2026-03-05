@@ -29,6 +29,7 @@ export async function PUT(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const minDepositAmount = Number(body.minDepositAmount);
     const minWithdrawalAmount = Number(body.minWithdrawalAmount);
+    const systemSetupBalance = Number(body.systemSetupBalance);
     const autoApprovePayments = Boolean(body.autoApprovePayments);
 
     if (!Number.isFinite(minDepositAmount) || minDepositAmount <= 0) {
@@ -37,10 +38,14 @@ export async function PUT(req: NextRequest) {
     if (!Number.isFinite(minWithdrawalAmount) || minWithdrawalAmount <= 0) {
       return NextResponse.json({ error: 'Invalid minimum withdrawal amount' }, { status: 400 });
     }
+    if (!Number.isFinite(systemSetupBalance) || systemSetupBalance < 0) {
+      return NextResponse.json({ error: 'Invalid setup balance' }, { status: 400 });
+    }
 
     const settings = await saveSystemSettings({
       minDepositAmount,
       minWithdrawalAmount,
+      systemSetupBalance,
       autoApprovePayments,
     });
 

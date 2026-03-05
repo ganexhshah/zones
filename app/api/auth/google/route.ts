@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '@/lib/prisma';
 import { generateToken } from '@/lib/auth';
+import { resolveAccountRestriction } from '@/lib/account-status';
 
 function getAllowedGoogleClientIds() {
   const ids = [
@@ -59,8 +60,18 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (user.isBlocked) {
-      return NextResponse.json({ error: 'Account blocked' }, { status: 403 });
+    const restriction = await resolveAccountRestriction(user);
+    if (restriction) {
+      return NextResponse.json(
+        {
+          error:
+            restriction.status === 'SUSPENDED'
+              ? 'Account suspended'
+              : 'Account blocked',
+          accountStatus: restriction,
+        },
+        { status: 403 },
+      );
     }
 
     const token = generateToken(user.id);

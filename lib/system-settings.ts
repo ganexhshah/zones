@@ -3,12 +3,14 @@ import { prisma } from '@/lib/prisma';
 export type SystemSettings = {
   minDepositAmount: number;
   minWithdrawalAmount: number;
+  systemSetupBalance: number;
   autoApprovePayments: boolean;
 };
 
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   minDepositAmount: 100,
   minWithdrawalAmount: 100,
+  systemSetupBalance: 50000,
   autoApprovePayments: false,
 };
 
@@ -23,6 +25,9 @@ export async function getSystemSettings(): Promise<SystemSettings> {
     minDepositAmount: Number(row.minDepositAmount ?? DEFAULT_SYSTEM_SETTINGS.minDepositAmount),
     minWithdrawalAmount: Number(
       row.minWithdrawalAmount ?? DEFAULT_SYSTEM_SETTINGS.minWithdrawalAmount
+    ),
+    systemSetupBalance: Number(
+      row.systemSetupBalance ?? DEFAULT_SYSTEM_SETTINGS.systemSetupBalance
     ),
     autoApprovePayments: Boolean(row.autoApprovePayments),
   };
@@ -39,6 +44,10 @@ export async function saveSystemSettings(
     input.minWithdrawalAmount == null
       ? current.minWithdrawalAmount
       : Number(input.minWithdrawalAmount);
+  const systemSetupBalance =
+    input.systemSetupBalance == null
+      ? current.systemSetupBalance
+      : Number(input.systemSetupBalance);
   const autoApprovePayments =
     input.autoApprovePayments == null
       ? current.autoApprovePayments
@@ -49,12 +58,14 @@ export async function saveSystemSettings(
     update: {
       minDepositAmount,
       minWithdrawalAmount,
+      systemSetupBalance,
       autoApprovePayments,
     },
     create: {
       id: 'global',
       minDepositAmount,
       minWithdrawalAmount,
+      systemSetupBalance,
       autoApprovePayments,
     },
   });
@@ -62,6 +73,7 @@ export async function saveSystemSettings(
   return {
     minDepositAmount: Number(row.minDepositAmount),
     minWithdrawalAmount: Number(row.minWithdrawalAmount),
+    systemSetupBalance: Number(row.systemSetupBalance),
     autoApprovePayments: Boolean(row.autoApprovePayments),
   };
 }

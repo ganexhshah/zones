@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuthUser } from '@/lib/route-auth';
 import { sendPushToUser } from '@/lib/push';
+import { getAddedBalance } from '@/lib/gift-balance';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,21 +14,28 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { recipientId, amount, message } = body;
+    const { recipientId, amount, message, sourceBalance } = body;
 
-    if (!recipientId || !amount) {
+    if (!recipientId || !amount || !sourceBalance) {
       return NextResponse.json(
-        { error: 'Recipient ID and amount are required' },
+        { error: 'Recipient ID, amount, and source balance are required' },
         { status: 400 }
       );
     }
 
     const senderId = authResult.user.id;
 
-    // Validate amount
-    if (amount <= 0) {
+    const giftAmount = Number(amount);
+    if (!Number.isFinite(giftAmount) || giftAmount <= 0) {
       return NextResponse.json(
-        { error: 'Amount must be greater than 0' },
+        { error: 'Gift amount must be a positive number' },
+        { status: 400 }
+      );
+    }
+    const normalizedSource = String(sourceBalance).toLowerCase();
+    if (!['withdrawable', 'added'].includes(normalizedSource)) {
+      return NextResponse.json(
+        { error: 'Invalid source balance' },
         { status: 400 }
       );
     }
@@ -50,9 +58,36 @@ export async function POST(request: NextRequest) {
         throw new Error('Sender not found');
       }
 
-      // Check if sender has sufficient balance
-      if (sender.walletBalance < amount) {
-        throw new Error('Insufficient balance');
+      const senderWalletBalance = Number(sender.walletBalance ?? 0);
+      const [wins, consumed] = await Promise.all([
+        tx.transaction.aggregate({
+          where: {
+            userId: senderId,
+            type: { in: ['tournament_win'] },
+            status: 'completed',
+          },
+          _sum: { amount: true },
+        }),
+        tx.transaction.aggregate({
+          where: {
+            userId: senderId,
+            type: { in: ['withdrawal', 'gift_sent_withdrawable'] },
+            status: { in: ['pending', 'completed'] },
+          },
+          _sum: { amount: true },
+        }),
+      ]);
+      const withdrawableBalance = Math.max(
+        0,
+        (wins._sum.amount ?? 0) - (consumed._sum.amount ?? 0),
+      );
+      const addedBalance = getAddedBalance(senderWalletBalance, withdrawableBalance);
+
+      if (normalizedSource === 'withdrawable' && giftAmount > withdrawableBalance) {
+        throw new Error('Insufficient withdrawable balance');
+      }
+      if (normalizedSource === 'added' && giftAmount > addedBalance) {
+        throw new Error('Insufficient added balance');
       }
 
       const recipient = await tx.user.findUnique({
@@ -64,16 +99,14 @@ export async function POST(request: NextRequest) {
         throw new Error('Recipient not found');
       }
 
-      // Deduct from sender
       await tx.user.update({
         where: { id: senderId },
-        data: { walletBalance: { decrement: amount } },
+        data: { walletBalance: { decrement: giftAmount } },
       });
 
-      // Add to recipient
       await tx.user.update({
         where: { id: recipientId },
-        data: { walletBalance: { increment: amount } },
+        data: { walletBalance: { increment: giftAmount } },
       });
 
       // Create transaction records
@@ -87,10 +120,10 @@ export async function POST(request: NextRequest) {
       await tx.transaction.create({
         data: {
           userId: senderId,
-          type: 'gift_sent',
-          amount: -amount,
+          type: normalizedSource === 'withdrawable' ? 'gift_sent_withdrawable' : 'gift_sent',
+          amount: giftAmount,
           status: 'completed',
-          reference: `Gift to ${recipientLabel}${message ? `: ${message}` : ''}`,
+          reference: `Gift to ${recipientLabel}${message ? `: ${message}` : ''} [source:${normalizedSource}]`,
         },
       });
 
@@ -98,9 +131,9 @@ export async function POST(request: NextRequest) {
         data: {
           userId: recipientId,
           type: 'gift_received',
-          amount: amount,
+          amount: giftAmount,
           status: 'completed',
-          reference: `Gift from ${senderLabel}${message ? `: ${message}` : ''}`,
+          reference: `Gift from ${senderLabel}${message ? `: ${message}` : ''} [source:${normalizedSource}]`,
         },
       });
 
@@ -109,10 +142,11 @@ export async function POST(request: NextRequest) {
         senderName: sender.name ?? 'User',
         recipientId: recipient.id,
         recipientName: recipient.name ?? 'User',
-        amount,
+        amount: giftAmount,
+        sourceBalance: normalizedSource,
         message: message ? String(message) : '',
-        senderNewBalance: sender.walletBalance - amount,
-        recipientNewBalance: recipient.walletBalance + amount,
+        senderNewWalletBalance: senderWalletBalance - giftAmount,
+        recipientNewWalletBalance: Number(recipient.walletBalance ?? 0) + giftAmount,
       };
     });
 
@@ -120,7 +154,7 @@ export async function POST(request: NextRequest) {
       sendPushToUser(result.senderId, {
         title: 'Gift sent',
         body:
-          `You sent Rs ${result.amount} gift to ${result.recipientName}.` +
+          `You sent Rs ${result.amount.toFixed(2)} to ${result.recipientName} from ${result.sourceBalance} balance.` +
           (result.message ? ` Message: ${result.message}` : ''),
         category: 'WALLET',
         data: {
@@ -133,7 +167,7 @@ export async function POST(request: NextRequest) {
       sendPushToUser(result.recipientId, {
         title: 'Gift received',
         body:
-          `You received Rs ${result.amount} gift from ${result.senderName}.` +
+          `You received Rs ${result.amount.toFixed(2)} from ${result.senderName}.` +
           (result.message ? ` Message: ${result.message}` : ''),
         category: 'WALLET',
         data: {
@@ -148,14 +182,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Gift sent successfully',
-      newBalance: result.senderNewBalance,
+      newWalletBalance: result.senderNewWalletBalance,
     });
   } catch (error: any) {
     console.error('Error sending gift:', error);
     
-    if (error.message === 'Insufficient balance') {
+    if (
+      error.message === 'Insufficient withdrawable balance' ||
+      error.message === 'Insufficient added balance'
+    ) {
       return NextResponse.json(
-        { error: 'Insufficient balance' },
+        { error: error.message },
         { status: 400 }
       );
     }

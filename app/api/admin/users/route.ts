@@ -40,6 +40,10 @@ export async function GET(req: NextRequest) {
           walletBalance: true,
           isVerified: true,
           isBlocked: true,
+          blockReason: true,
+          suspendedUntil: true,
+          unblockRequestStatus: true,
+          unblockRequestedAt: true,
           createdAt: true,
           pushTokens: {
             where: { isActive: true },

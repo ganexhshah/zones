@@ -4,31 +4,7 @@ import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
 import { getSystemSettings } from '@/lib/system-settings';
 import { sendPushToUser } from '@/lib/push';
-
-async function getWithdrawableWinningBalance(userId: string) {
-  const [wins, completedWithdrawals, pendingWithdrawals] = await Promise.all([
-    prisma.transaction.aggregate({
-      where: {
-        userId,
-        type: { in: ['tournament_win'] },
-        status: 'completed',
-      },
-      _sum: { amount: true },
-    }),
-    prisma.transaction.aggregate({
-      where: { userId, type: 'withdrawal', status: 'completed' },
-      _sum: { amount: true },
-    }),
-    prisma.transaction.aggregate({
-      where: { userId, type: 'withdrawal', status: 'pending' },
-      _sum: { amount: true },
-    }),
-  ]);
-
-  const totalWins = wins._sum.amount ?? 0;
-  const used = (completedWithdrawals._sum.amount ?? 0) + (pendingWithdrawals._sum.amount ?? 0);
-  return Math.max(0, totalWins - used);
-}
+import { getWithdrawableWinningBalance } from '@/lib/gift-balance';
 
 export async function POST(req: NextRequest) {
   try {

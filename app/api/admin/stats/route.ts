@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
+import { getSystemSettings } from '@/lib/system-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,9 @@ export async function GET(req: NextRequest) {
       totalUsers,
       pendingTransactions,
       totalRevenue,
+      totalWithdrawals,
+      userBalanceAggregate,
+      settings,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.transaction.count({ where: { status: 'pending', type: 'deposit' } }),
@@ -33,7 +37,21 @@ export async function GET(req: NextRequest) {
         where: { status: 'completed', type: 'deposit' },
         _sum: { amount: true },
       }),
+      prisma.transaction.aggregate({
+        where: { status: 'completed', type: 'withdrawal' },
+        _sum: { amount: true },
+      }),
+      prisma.user.aggregate({
+        _sum: { walletBalance: true },
+      }),
+      getSystemSettings(),
     ]);
+
+    const totalDepositsCompleted = Number(totalRevenue._sum.amount || 0);
+    const totalWithdrawalsCompleted = Number(totalWithdrawals._sum.amount || 0);
+    const totalUserBalance = Number(userBalanceAggregate._sum.walletBalance || 0);
+    const setupBalance = Number(settings.systemSetupBalance || 0);
+    const systemUsableBalance = setupBalance - totalDepositsCompleted - totalWithdrawalsCompleted;
 
     // Get recent transactions
     const recentTransactions = await prisma.transaction.findMany({
@@ -92,7 +110,12 @@ export async function GET(req: NextRequest) {
         totalUsers,
         activeGames: 4,
         pendingTransactions,
-        totalRevenue: totalRevenue._sum.amount || 0,
+        totalRevenue: totalDepositsCompleted,
+        totalDepositsCompleted,
+        totalWithdrawalsCompleted,
+        totalUserBalance,
+        setupBalance,
+        systemUsableBalance,
       },
       recentTransactions: recentTransactions.map((t) => ({
         id: t.id,

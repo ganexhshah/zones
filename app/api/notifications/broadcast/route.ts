@@ -10,7 +10,22 @@ export async function GET(req: NextRequest) {
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
     const notifications = await prisma.broadcastNotification.findMany({
-      where: { target: 'ALL' },
+      where: {
+        target: 'ALL',
+        OR: [
+          { showAsPopup: false },
+          { showAsPopup: true, allowDontShowAgain: false },
+          {
+            showAsPopup: true,
+            allowDontShowAgain: true,
+            popupDismissals: {
+              none: {
+                userId: auth.user.id,
+              },
+            },
+          },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       take: 30,
       select: {
@@ -19,6 +34,8 @@ export async function GET(req: NextRequest) {
         message: true,
         type: true,
         bannerImageUrl: true,
+        showAsPopup: true,
+        allowDontShowAgain: true,
         createdAt: true,
       },
     });

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 
 export async function POST(
   req: NextRequest,
@@ -12,24 +11,24 @@ export async function POST(
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
 
     const user = await prisma.user.update({
       where: { id: params.id },
-      data: { isBlocked: false },
+      data: {
+        isBlocked: false,
+        blockReason: null,
+        suspendedUntil: null,
+        unblockRequestStatus: 'APPROVED',
+        unblockReviewNote: 'Approved by admin and account unblocked.',
+        unblockReviewedAt: new Date(),
+      },
     });
 
     return NextResponse.json({ user });
   } catch (error) {
     console.error('Unblock user error:', error);
-    return NextResponse.json({ error: 'Failed to unblock user' }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : 'Failed to unblock user';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

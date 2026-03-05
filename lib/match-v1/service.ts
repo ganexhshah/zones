@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
+import { getCustomMatchOdds, getModeOdd } from '@/lib/custom-odds';
 import { decryptText, encryptText } from '@/lib/match-v1/crypto';
 import { emitMatchAndUsers, emitToUser } from '@/lib/match-v1/realtime';
 import { sendPushToUser } from '@/lib/push';
@@ -145,12 +146,13 @@ export async function createMatch(params: {
   selectedSkills: string[];
   headshotOnly: boolean;
   gunAttributes: boolean;
-  platformFeePercent: number;
 }) {
   ensurePositiveDecimal(params.entryFee, 'entryFee');
 
+  const customOdds = await getCustomMatchOdds();
+  const modeOdd = getModeOdd(customOdds, params.matchType);
   const entryFee = new Prisma.Decimal(params.entryFee);
-  const prizePool = entryFee.mul(2).mul(new Prisma.Decimal(1).minus(new Prisma.Decimal(params.platformFeePercent).div(100)));
+  const prizePool = entryFee.mul(new Prisma.Decimal(modeOdd));
 
   const match = await prisma.$transaction(async (tx) => {
     await lockUserRow(tx, params.creatorId);
@@ -1247,7 +1249,6 @@ export async function verifyMatchAndPayout(params: {
   matchId: string;
   verifiedBy: string;
   winnerUserId: string;
-  platformFeePercent: number;
 }) {
   const result = await prisma.$transaction(async (tx) => {
     await lockMatchRow(tx, params.matchId);
@@ -1264,8 +1265,12 @@ export async function verifyMatchAndPayout(params: {
     if (!escrow) throw new Error('ESCROW_NOT_FOUND');
 
     const total = new Prisma.Decimal(match.entryFee).mul(2);
-    const fee = total.mul(new Prisma.Decimal(params.platformFeePercent).div(100));
-    const winnerCredit = total.minus(fee);
+    const configuredPrizePool = Prisma.Decimal.min(
+      total,
+      Prisma.Decimal.max(new Prisma.Decimal(0), new Prisma.Decimal(match.prizePool)),
+    );
+    const winnerCredit = configuredPrizePool;
+    const fee = total.minus(winnerCredit);
 
     await lockUserRow(tx, match.creatorId);
     await lockUserRow(tx, match.joinerId);

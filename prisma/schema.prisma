@@ -18,10 +18,19 @@ model User {
   googleId      String?   @unique
   authProvider  String    @default("email")
   walletBalance Float     @default(0)
+  coinBalance   Int       @default(0)
+  freeEntryTokens Int     @default(0)
   availableBalance Decimal @default(0) @db.Decimal(18, 2)
   lockedBalance   Decimal @default(0) @db.Decimal(18, 2)
   isVerified    Boolean   @default(false)
   isBlocked     Boolean   @default(false)
+  blockReason   String?
+  suspendedUntil DateTime?
+  unblockRequestStatus String @default("NONE") // NONE | PENDING | APPROVED | REJECTED
+  unblockRequestMessage String?
+  unblockRequestedAt DateTime?
+  unblockReviewNote String?
+  unblockReviewedAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   
@@ -56,6 +65,27 @@ model User {
   matchLogs MatchLog[] @relation("PerformedBy")
   resultClaimsSubmitted MatchResultClaim[] @relation("ResultClaimSubmitter")
   resultClaimsAsWinner MatchResultClaim[] @relation("ResultClaimWinner")
+  rewardState UserRewardState?
+  rewardSpins RewardSpin[]
+  rewardAudits RewardAudit[]
+  popupDismissals BroadcastPopupDismissal[]
+  subAdminProfile SubAdmin? @relation("SubAdminUser")
+  subAdminsCreated SubAdmin[] @relation("SubAdminCreator")
+}
+
+model SubAdmin {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  createdByUserId String?
+  permissions     Json
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation("SubAdminUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy       User?    @relation("SubAdminCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([isActive, createdAt])
 }
 
 enum MatchStatus {
@@ -400,16 +430,32 @@ model BroadcastNotification {
   id              String   @id @default(cuid())
   title           String
   message         String
-  type            String   @default("NORMAL") // NORMAL | BANNER
+  type            String   @default("NORMAL") // NORMAL | BANNER | POPUP
   bannerImageUrl  String?
   target          String   @default("ALL")
+  showAsPopup     Boolean  @default(false)
+  allowDontShowAgain Boolean @default(true)
   createdByUserId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   createdBy       User?    @relation("BroadcastCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  popupDismissals BroadcastPopupDismissal[]
 
   @@index([createdAt])
+}
+
+model BroadcastPopupDismissal {
+  id          String   @id @default(cuid())
+  userId      String
+  broadcastId String
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  broadcast   BroadcastNotification @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, broadcastId])
+  @@index([broadcastId])
 }
 
 model UserNotification {
@@ -446,7 +492,12 @@ model AppConfig {
   id                   String   @id @default("global")
   minDepositAmount     Float    @default(100)
   minWithdrawalAmount  Float    @default(100)
+  systemSetupBalance   Float    @default(50000)
   autoApprovePayments  Boolean  @default(false)
+  customOdd1v1         Float    @default(1.8)
+  customOdd2v2         Float    @default(1.8)
+  customOdd3v3         Float    @default(1.8)
+  customOdd4v4         Float    @default(1.8)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 }
@@ -706,4 +757,45 @@ model RefreshToken {
 
   @@index([userId, createdAt])
   @@index([expiresAt])
+}
+
+model UserRewardState {
+  userId            String   @id
+  lastDailyClaimAt  DateTime?
+  streak            Int      @default(0)
+  lastSpinAt        DateTime?
+  spinTokens        Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RewardSpin {
+  id             String   @id @default(cuid())
+  userId         String
+  rewardType     String
+  rewardValue    Int
+  createdAt      DateTime @default(now())
+  clientSeed     String?
+  serverSeedHash String?
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model RewardAudit {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
 }

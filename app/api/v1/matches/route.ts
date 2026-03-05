@@ -27,7 +27,6 @@ export async function POST(req: NextRequest) {
       selectedSkills: input.selectedSkills,
       headshotOnly: input.headshotOnly,
       gunAttributes: input.gunAttributes,
-      platformFeePercent: input.platformFeePercent,
     });
 
     return ok({ match: toMatchResponse(match) }, 201);

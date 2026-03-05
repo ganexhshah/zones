@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { redis } from '@/lib/redis';
 import { generateToken } from '@/lib/auth';
+import { resolveAccountRestriction } from '@/lib/account-status';
 
 export async function POST(req: NextRequest) {
   try {
@@ -58,6 +59,20 @@ export async function POST(req: NextRequest) {
     }
 
     await redis.del(`otp:${email}`, `signup:${email}`);
+
+    const restriction = await resolveAccountRestriction(user);
+    if (restriction) {
+      return NextResponse.json(
+        {
+          error:
+            restriction.status === 'SUSPENDED'
+              ? 'Account suspended'
+              : 'Account blocked',
+          accountStatus: restriction,
+        },
+        { status: 403 },
+      );
+    }
 
     const token = generateToken(user.id);
     return NextResponse.json({ token, user: { id: user.id, email: user.email } });

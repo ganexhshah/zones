@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const transactions = await prisma.transaction.findMany({
       where: {
         userId: authResult.user.id,
-        type: { in: ['gift_sent', 'gift_received'] },
+        type: { in: ['gift_sent', 'gift_sent_withdrawable', 'gift_received'] },
       },
       orderBy: { createdAt: 'desc' },
       take: 30,
@@ -34,4 +34,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch gift history' }, { status: 500 });
   }
 }
-

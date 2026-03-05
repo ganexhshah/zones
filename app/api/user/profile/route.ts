@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { verifyToken } from '@/lib/auth';
+import { resolveAccountRestriction } from '@/lib/account-status';
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,7 +24,12 @@ export async function GET(req: NextRequest) {
         name: true,
         avatar: true,
         walletBalance: true,
+        coinBalance: true,
+        freeEntryTokens: true,
         isVerified: true,
+        isBlocked: true,
+        blockReason: true,
+        suspendedUntil: true,
         createdAt: true,
         gameIds: {
           select: {
@@ -38,6 +44,25 @@ export async function GET(req: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    const restriction = await resolveAccountRestriction({
+      id: user.id,
+      isBlocked: user.isBlocked,
+      blockReason: user.blockReason,
+      suspendedUntil: user.suspendedUntil,
+    });
+    if (restriction) {
+      return NextResponse.json(
+        {
+          error:
+            restriction.status === 'SUSPENDED'
+              ? 'Account suspended'
+              : 'Account blocked',
+          accountStatus: restriction,
+        },
+        { status: 403 },
+      );
     }
 
     return NextResponse.json({ user });
@@ -59,6 +84,32 @@ export async function PUT(req: NextRequest) {
     }
 
     const { name, phone } = await req.json();
+
+    const existing = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        isBlocked: true,
+        blockReason: true,
+        suspendedUntil: true,
+      },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+    const restriction = await resolveAccountRestriction(existing);
+    if (restriction) {
+      return NextResponse.json(
+        {
+          error:
+            restriction.status === 'SUSPENDED'
+              ? 'Account suspended'
+              : 'Account blocked',
+          accountStatus: restriction,
+        },
+        { status: 403 },
+      );
+    }
 
     const user = await prisma.user.update({
       where: { id: payload.userId },

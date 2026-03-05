@@ -66,26 +66,53 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    // Get user growth for last 7 days
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    // Get user growth for last 7 days (including zero-signup days).
+    const startDay = new Date();
+    startDay.setHours(0, 0, 0, 0);
+    startDay.setDate(startDay.getDate() - 6);
 
-    const userGrowth = await prisma.$queryRaw<Array<{ date: string; users: number }>>`
+    const userGrowthRaw = await prisma.$queryRaw<Array<{ date: string; users: number }>>`
       SELECT 
         TO_CHAR(DATE_TRUNC('day', "createdAt"), 'Mon DD') as date,
         COUNT(*)::int as users
       FROM "User"
-      WHERE "createdAt" >= ${sevenDaysAgo}
+      WHERE "createdAt" >= ${startDay}
       GROUP BY DATE_TRUNC('day', "createdAt")
       ORDER BY DATE_TRUNC('day', "createdAt") ASC
     `;
 
-    // User status distribution
+    const growthLookup = new Map(
+      userGrowthRaw.map((row) => [row.date, Number(row.users || 0)])
+    );
+    const userGrowth = Array.from({ length: 7 }, (_, index) => {
+      const d = new Date(startDay);
+      d.setDate(startDay.getDate() + index);
+      const label = d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+      return {
+        date: label,
+        users: growthLookup.get(label) ?? 0,
+      };
+    });
+
+    // Non-overlapping user status distribution for accurate pie chart percentages.
+    const activeVerified = await prisma.user.count({
+      where: { isBlocked: false, isVerified: true },
+    });
+    const activeUnverified = await prisma.user.count({
+      where: { isBlocked: false, isVerified: false },
+    });
+    const blockedVerified = await prisma.user.count({
+      where: { isBlocked: true, isVerified: true },
+    });
+    const blockedUnverified = await prisma.user.count({
+      where: { isBlocked: true, isVerified: false },
+    });
+
     const usersByStatus = [
-      { name: 'Active', value: activeUsers, color: '#10b981' },
-      { name: 'Verified', value: verifiedUsers, color: '#3b82f6' },
-      { name: 'Unverified', value: totalUsers - verifiedUsers, color: '#f59e0b' },
-      { name: 'Blocked', value: blockedUsers, color: '#ef4444' },
+      { name: 'Active Verified', value: activeVerified, color: '#10b981' },
+      { name: 'Active Unverified', value: activeUnverified, color: '#3b82f6' },
+      { name: 'Blocked Verified', value: blockedVerified, color: '#f59e0b' },
+      { name: 'Blocked Unverified', value: blockedUnverified, color: '#ef4444' },
     ];
 
     const recentSignups = recentSignupsRaw.map((user) => ({
@@ -107,15 +134,7 @@ export async function GET(req: NextRequest) {
       blockedUsers,
       lastDaySignups,
       recentSignups,
-      userGrowth: userGrowth.length > 0 ? userGrowth : [
-        { date: 'Mon 01', users: 0 },
-        { date: 'Tue 02', users: 0 },
-        { date: 'Wed 03', users: 0 },
-        { date: 'Thu 04', users: 0 },
-        { date: 'Fri 05', users: 0 },
-        { date: 'Sat 06', users: 0 },
-        { date: 'Sun 07', users: 0 },
-      ],
+      userGrowth,
       usersByStatus,
     });
   } catch (error) {

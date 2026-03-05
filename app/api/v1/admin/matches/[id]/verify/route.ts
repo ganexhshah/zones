@@ -20,7 +20,6 @@ export async function POST(
       matchId: id,
       verifiedBy: auth.user.id,
       winnerUserId: body.winnerUserId,
-      platformFeePercent: body.platformFeePercent,
     });
 
     return ok({

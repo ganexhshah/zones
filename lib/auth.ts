@@ -18,8 +18,20 @@ export async function verifyPassword(password: string, hash: string) {
   return bcrypt.compare(password, hash);
 }
 
-export function generateToken(userId: string) {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
+export function generateToken(
+  userId: string,
+  options?: { isAdmin?: boolean; isMainAdmin?: boolean; permissions?: string[] }
+) {
+  return jwt.sign(
+    {
+      userId,
+      isAdmin: Boolean(options?.isAdmin),
+      isMainAdmin: Boolean(options?.isMainAdmin),
+      permissions: Array.isArray(options?.permissions) ? options?.permissions : [],
+    },
+    JWT_SECRET,
+    { expiresIn: '30d' }
+  );
 }
 
 export function verifyToken(token: string) {
@@ -31,7 +43,14 @@ export function verifyToken(token: string) {
       'userId' in decoded &&
       typeof (decoded as { userId?: unknown }).userId === 'string'
     ) {
-      return { userId: (decoded as { userId: string }).userId };
+      return {
+        userId: (decoded as { userId: string }).userId,
+        isAdmin: Boolean((decoded as { isAdmin?: unknown }).isAdmin),
+        isMainAdmin: Boolean((decoded as { isMainAdmin?: unknown }).isMainAdmin),
+        permissions: Array.isArray((decoded as { permissions?: unknown }).permissions)
+          ? ((decoded as { permissions: string[] }).permissions)
+          : [],
+      };
     }
     return null;
   } catch {

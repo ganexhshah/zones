@@ -21,6 +21,15 @@ export async function GET(
         joiner: { select: { id: true, name: true, avatar: true } },
         joinRequests: { orderBy: { createdAt: 'desc' } },
         escrows: { orderBy: { createdAt: 'desc' }, take: 1 },
+        walletLedger: {
+          orderBy: { createdAt: 'desc' },
+          take: 200,
+          include: {
+            user: {
+              select: { id: true, name: true, email: true, avatar: true },
+            },
+          },
+        },
         resultClaims: {
           include: {
             submitter: { select: { id: true, name: true, avatar: true } },
@@ -29,11 +38,17 @@ export async function GET(
           orderBy: { createdAt: 'desc' },
         },
         logs: {
-          where: { action: { in: ['RESULT_SUBMITTED', 'MATCH_COMPLETED'] } },
           orderBy: { createdAt: 'desc' },
-          take: 20,
+          take: 200,
           include: {
             performer: { select: { id: true, name: true, avatar: true } },
+          },
+        },
+        chatMessages: {
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+          include: {
+            sender: { select: { id: true, name: true, avatar: true } },
           },
         },
       },
@@ -89,12 +104,30 @@ export async function GET(
         }
       : null;
 
+    const participantUserIds = [match.creatorId, match.joinerId].filter(
+      (userId): userId is string => Boolean(userId),
+    );
+    const relatedTransactions = await prisma.transaction.findMany({
+      where: {
+        OR: [
+          { reference: { contains: match.id, mode: 'insensitive' } },
+          { userId: { in: participantUserIds } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: {
+        user: { select: { id: true, name: true, email: true, avatar: true } },
+      },
+    });
+
     return ok({
       match: {
         ...match,
         resultSubmission,
         completion,
         resultClaims: match.resultClaims || [],
+        relatedTransactions,
       },
     });
   } catch (error) {
