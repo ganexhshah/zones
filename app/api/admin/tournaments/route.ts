@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
-
-function getAuthPayload(req: NextRequest) {
-  const token = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (!token) return null;
-  return verifyToken(token);
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,14 +8,12 @@ export async function GET(req: NextRequest) {
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const payload = getAuthPayload(req);
-    if (!payload) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '10', 10);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(searchParams.get('limit') || '10', 10)),
+    );
     const search = (searchParams.get('search') || '').trim();
     const skip = (page - 1) * limit;
 
@@ -75,12 +66,7 @@ export async function POST(req: NextRequest) {
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const payload = getAuthPayload(req);
-    if (!payload) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const title = String(body.title || '').trim();
     const game = String(body.game || 'Free Fire').trim();
@@ -185,3 +171,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to create tournament' }, { status: 500 });
   }
 }
+

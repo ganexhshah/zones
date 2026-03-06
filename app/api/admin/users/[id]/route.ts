@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 
 export async function GET(
   req: NextRequest,
@@ -12,16 +11,6 @@ export async function GET(
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
     const userId = params.id;
 
     const user = await prisma.user.findUnique({
@@ -65,7 +54,6 @@ export async function GET(
         pushTokens: {
           select: {
             id: true,
-            token: true,
             deviceId: true,
             platform: true,
             isActive: true,
@@ -274,8 +262,10 @@ export async function GET(
     const totalWithdrawal = Number(totalWithdrawalAgg._sum.amount || 0);
     const pendingWithdrawal = Number(pendingWithdrawalAgg._sum.amount || 0);
 
+    const { pushTokens, ...safeUser } = user;
+
     return NextResponse.json({
-      ...user,
+      ...safeUser,
       walletBalance: Number(user.walletBalance || 0),
       availableBalance: Number(user.availableBalance || 0),
       lockedBalance: Number(user.lockedBalance || 0),
@@ -356,16 +346,6 @@ export async function PATCH(
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
 
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
     const userId = params.id;
     const body = await req.json().catch(() => ({}));
 
@@ -416,7 +396,7 @@ export async function PATCH(
             newCoinBalance: coinBalance,
             previousFreeEntryTokens: existingUser.freeEntryTokens,
             newFreeEntryTokens: freeEntryTokens,
-            adminUserId: payload.userId,
+            adminUserId: adminAuth.user.id,
           },
           ipAddress: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
           userAgent: req.headers.get('user-agent') || '',

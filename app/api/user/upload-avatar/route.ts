@@ -1,18 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { cloudinary } from '@/lib/cloudinary';
-import { verifyToken } from '@/lib/auth';
+import { requireAuthUser } from '@/lib/route-auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const formData = await req.formData();
@@ -20,6 +15,13 @@ export async function POST(req: NextRequest) {
     
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+    }
+    if (!file.type?.startsWith('image/')) {
+      return NextResponse.json({ error: 'Avatar must be an image file' }, { status: 400 });
+    }
+    const maxAvatarSize = 5 * 1024 * 1024;
+    if (file.size > maxAvatarSize) {
+      return NextResponse.json({ error: 'Avatar must be 5MB or smaller' }, { status: 400 });
     }
 
     // Convert file to base64
@@ -38,7 +40,7 @@ export async function POST(req: NextRequest) {
 
     // Update user avatar
     const user = await prisma.user.update({
-      where: { id: payload.userId },
+      where: { id: auth.user.id },
       data: { avatar: result.secure_url },
       select: {
         id: true,

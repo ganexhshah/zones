@@ -7,6 +7,7 @@ import { createNotificationForAllUsers } from '@/lib/notifications';
 import { sendEmailMany } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
+const MAX_BROADCAST_IMAGE_BYTES = 8 * 1024 * 1024;
 
 type EmailTemplateType = 'GENERAL' | 'PROMOTION' | 'MAINTENANCE' | 'SECURITY';
 
@@ -84,6 +85,9 @@ function buildEmailHtml({
 async function uploadImageFromFile(file: File, folder: string) {
   if (!file.type?.startsWith('image/')) {
     throw new Error('Please upload a valid image file');
+  }
+  if (file.size > MAX_BROADCAST_IMAGE_BYTES) {
+    throw new Error('Image must be 8MB or smaller');
   }
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);

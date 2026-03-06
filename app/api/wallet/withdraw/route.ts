@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
 import { getSystemSettings } from '@/lib/system-settings';
 import { sendPushToUser } from '@/lib/push';
 import { getWithdrawableWinningBalance } from '@/lib/gift-balance';
+import { requireAuthUser } from '@/lib/route-auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const body = await req.json().catch(() => ({}));
@@ -37,7 +32,7 @@ export async function POST(req: NextRequest) {
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
+      where: { id: auth.user.id },
       select: { id: true, email: true, name: true, walletBalance: true },
     });
 

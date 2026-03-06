@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
 import { sendPushToUser } from '@/lib/push';
 
@@ -14,57 +13,66 @@ export async function POST(
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
+    const { transaction, updatedUser, updatedTransaction } = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Transaction" WHERE id = ${params.id} FOR UPDATE`;
 
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: params.id },
-      include: { user: true },
-    });
-
-    if (!transaction) {
-      return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
-    }
-
-    if (transaction.status !== 'pending') {
-      return NextResponse.json({ error: 'Transaction already processed' }, { status: 400 });
-    }
-
-    if (transaction.type === 'withdrawal' && transaction.user.walletBalance < transaction.amount) {
-      return NextResponse.json(
-        { error: 'User has insufficient wallet balance for withdrawal approval' },
-        { status: 400 }
-      );
-    }
-
-    const walletDelta =
-      transaction.type === 'deposit'
-        ? transaction.amount
-        : transaction.type === 'withdrawal'
-        ? -transaction.amount
-        : 0;
-
-    const [updatedTransaction, updatedUser] = await prisma.$transaction([
-      prisma.transaction.update({
+      const transaction = await tx.transaction.findUnique({
         where: { id: params.id },
-        data: { status: 'completed' },
-      }),
-      prisma.user.update({
+        include: { user: true },
+      });
+      if (!transaction) {
+        throw Object.assign(new Error('Transaction not found'), { code: 'TX_NOT_FOUND' });
+      }
+      if (transaction.status !== 'pending') {
+        throw Object.assign(new Error('Transaction already processed'), { code: 'TX_ALREADY_PROCESSED' });
+      }
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${transaction.userId} FOR UPDATE`;
+      const lockedUser = await tx.user.findUnique({
         where: { id: transaction.userId },
-        data: {
-          walletBalance: {
-            increment: walletDelta,
-          },
-        },
-      }),
-    ]);
+        select: { id: true, walletBalance: true },
+      });
+      if (!lockedUser) {
+        throw Object.assign(new Error('User not found'), { code: 'USER_NOT_FOUND' });
+      }
+      if (transaction.type === 'withdrawal' && lockedUser.walletBalance < transaction.amount) {
+        throw Object.assign(new Error('User has insufficient wallet balance for withdrawal approval'), {
+          code: 'INSUFFICIENT_BALANCE',
+        });
+      }
+
+      const walletDelta =
+        transaction.type === 'deposit'
+          ? transaction.amount
+          : transaction.type === 'withdrawal'
+          ? -transaction.amount
+          : 0;
+
+      const statusUpdate = await tx.transaction.updateMany({
+        where: { id: params.id, status: 'pending' },
+        data: { status: 'completed' },
+      });
+      if (statusUpdate.count !== 1) {
+        throw Object.assign(new Error('Transaction already processed'), { code: 'TX_ALREADY_PROCESSED' });
+      }
+
+      const updatedUser = walletDelta === 0
+        ? await tx.user.findUniqueOrThrow({ where: { id: transaction.userId } })
+        : await tx.user.update({
+            where: { id: transaction.userId },
+            data: {
+              walletBalance: {
+                increment: walletDelta,
+              },
+            },
+          });
+      const updatedTransaction = await tx.transaction.findUniqueOrThrow({
+        where: { id: params.id },
+      });
+
+      return { transaction, updatedUser, updatedTransaction };
+    });
 
     if (transaction.user.email) {
       const isWithdrawal = transaction.type === 'withdrawal';
@@ -104,6 +112,19 @@ export async function POST(
 
     return NextResponse.json({ transaction: updatedTransaction });
   } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code === 'TX_NOT_FOUND') {
+      return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+    }
+    if (code === 'TX_ALREADY_PROCESSED') {
+      return NextResponse.json({ error: 'Transaction already processed' }, { status: 400 });
+    }
+    if (code === 'INSUFFICIENT_BALANCE') {
+      return NextResponse.json(
+        { error: 'User has insufficient wallet balance for withdrawal approval' },
+        { status: 400 },
+      );
+    }
     console.error('Approve transaction error:', error);
     return NextResponse.json({ error: 'Failed to approve transaction' }, { status: 500 });
   }

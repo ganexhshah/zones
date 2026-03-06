@@ -1,25 +1,20 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { requireAuthUser } from '@/lib/route-auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
-    console.log('Fetching stats for user:', payload.userId);
+    console.log('Fetching stats for user:', auth.user.id);
 
     const tournamentParticipations = await prisma.tournamentParticipant.findMany({
-      where: { userId: payload.userId },
+      where: { userId: auth.user.id },
       include: {
         tournament: {
           select: {
@@ -41,7 +36,7 @@ export async function GET(req: NextRequest) {
 
     const transactions = await prisma.transaction.findMany({
       where: {
-        userId: payload.userId,
+        userId: auth.user.id,
         type: { in: ['tournament_win'] },
         status: 'completed',
       },

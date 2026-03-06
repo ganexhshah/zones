@@ -20,7 +20,7 @@ type AuthUserResult = {
 };
 
 export async function requireAuthUser(req: NextRequest) {
-  const token = req.headers.get('authorization')?.replace('Bearer ', '');
+  const token = req.headers.get('authorization')?.replace('Bearer ', '') ?? req.cookies.get('auth_token')?.value;
   if (!token) return { error: 'Unauthorized', status: 401 as const } satisfies AuthError;
 
   const payload = verifyToken(token);
@@ -42,7 +42,7 @@ export async function requireAuthUser(req: NextRequest) {
 }
 
 export function requireAuthPayload(req: NextRequest) {
-  const token = req.headers.get('authorization')?.replace('Bearer ', '');
+  const token = req.headers.get('authorization')?.replace('Bearer ', '') ?? req.cookies.get('auth_token')?.value;
   if (!token) return { error: 'Unauthorized', status: 401 as const };
   const payload = verifyToken(token);
   if (!payload) return { error: 'Invalid token', status: 401 as const };
@@ -66,3 +66,4 @@ export async function requireAdminUser(req: NextRequest) {
 
   return { ...auth, adminAccess } satisfies AuthUserResult & { adminAccess: AdminAccess };
 }
+

@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { cloudinary } from '@/lib/cloudinary';
-import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
 import { getSystemSettings } from '@/lib/system-settings';
 import { sendPushToUser } from '@/lib/push';
+import { requireAuthUser } from '@/lib/route-auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const formData = await req.formData();
@@ -25,6 +20,13 @@ export async function POST(req: NextRequest) {
 
     if (!amount || !method || !screenshot) {
       return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
+    }
+    if (!screenshot.type?.startsWith('image/')) {
+      return NextResponse.json({ error: 'Screenshot must be an image file' }, { status: 400 });
+    }
+    const maxScreenshotSize = 8 * 1024 * 1024;
+    if (screenshot.size > maxScreenshotSize) {
+      return NextResponse.json({ error: 'Screenshot must be 8MB or smaller' }, { status: 400 });
     }
 
     const settings = await getSystemSettings();
@@ -47,7 +49,7 @@ export async function POST(req: NextRequest) {
     const transaction = await prisma.$transaction(async (tx) => {
       const created = await tx.transaction.create({
         data: {
-          userId: payload.userId,
+          userId: auth.user.id,
           type: 'deposit',
           amount,
           method,
@@ -58,7 +60,7 @@ export async function POST(req: NextRequest) {
 
       if (settings.autoApprovePayments) {
         await tx.user.update({
-          where: { id: payload.userId },
+          where: { id: auth.user.id },
           data: {
             walletBalance: {
               increment: amount,
@@ -71,7 +73,7 @@ export async function POST(req: NextRequest) {
     });
 
     const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
+      where: { id: auth.user.id },
       select: { email: true, name: true },
     });
 
@@ -104,7 +106,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await sendPushToUser(payload.userId, {
+    await sendPushToUser(auth.user.id, {
       title: settings.autoApprovePayments ? 'Deposit Approved' : 'Deposit Submitted',
       body: settings.autoApprovePayments
         ? `Rs ${amount.toFixed(2)} added to your wallet.`

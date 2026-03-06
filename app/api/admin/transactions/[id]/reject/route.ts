@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 import { sendEmail } from '@/lib/email';
 import { sendPushToUser } from '@/lib/push';
 
@@ -20,16 +19,6 @@ export async function POST(
       rejectNote = (body?.note || '').toString().trim();
     } catch {
       // keep backward compatibility
-    }
-
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
     const transaction = await prisma.transaction.findUnique({

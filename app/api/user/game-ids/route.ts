@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { requireAuthUser } from '@/lib/route-auth';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const gameIds = await prisma.gameId.findMany({
-      where: { userId: payload.userId },
+      where: { userId: auth.user.id },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -27,14 +22,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const { gameName, gameId, inGameName } = await req.json();
@@ -52,7 +42,7 @@ export async function POST(req: NextRequest) {
     const newGameId = await prisma.gameId.upsert({
       where: {
         userId_gameName: {
-          userId: payload.userId,
+          userId: auth.user.id,
           gameName: normalizedGameName,
         },
       },
@@ -61,7 +51,7 @@ export async function POST(req: NextRequest) {
         inGameName: normalizedInGameName || null,
       },
       create: {
-        userId: payload.userId,
+        userId: auth.user.id,
         gameName: normalizedGameName,
         gameId: normalizedGameId,
         inGameName: normalizedInGameName || null,
@@ -76,14 +66,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const { searchParams } = new URL(req.url);
@@ -94,7 +79,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     await prisma.gameId.delete({
-      where: { id, userId: payload.userId },
+      where: { id, userId: auth.user.id },
     });
 
     return NextResponse.json({ success: true });

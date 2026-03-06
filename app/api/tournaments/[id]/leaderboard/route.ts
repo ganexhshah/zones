@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { recalculateTournamentLeaderboard } from '@/lib/tournament-engine';
+import { requireAdminUser } from '@/lib/route-auth';
 
 export async function GET(
   req: NextRequest,
@@ -17,6 +18,10 @@ export async function GET(
     if (!tournament) return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
 
     if (recalc) {
+      const adminAuth = await requireAdminUser(req);
+      if ('error' in adminAuth) {
+        return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+      }
       await recalculateTournamentLeaderboard(params.id);
     }
 
@@ -26,7 +31,7 @@ export async function GET(
       include: {
         registration: {
           include: {
-            user: { select: { id: true, name: true, email: true } },
+            user: { select: { id: true, name: true } },
             team: { select: { id: true, name: true } },
           },
         },
@@ -46,7 +51,7 @@ export async function GET(
         wins: row.wins,
         participant: row.registration.team
           ? { type: 'team', id: row.registration.team.id, name: row.registration.team.name }
-          : { type: 'user', id: row.registration.user?.id, name: row.registration.user?.name || row.registration.user?.email || 'Unknown' },
+          : { type: 'user', id: row.registration.user?.id, name: row.registration.user?.name || 'Unknown' },
       })),
     });
   } catch (error) {

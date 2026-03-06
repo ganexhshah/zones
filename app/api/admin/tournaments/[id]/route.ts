@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
-
-function getAuthPayload(req: NextRequest) {
-  const token = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (!token) return null;
-  return verifyToken(token);
-}
 
 export async function GET(
   req: NextRequest,
@@ -18,11 +11,6 @@ export async function GET(
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const payload = getAuthPayload(req);
-    if (!payload) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const tournamentId = params.id;
 
     const tournament = await prisma.tournament.findUnique({
@@ -97,13 +85,8 @@ export async function PATCH(
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const payload = getAuthPayload(req);
-    if (!payload) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const tournamentId = params.id;
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const updateData: any = {};
     const shouldUpdateRoom =

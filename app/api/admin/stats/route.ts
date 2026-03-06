@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 import { getSystemSettings } from '@/lib/system-settings';
 
 export const dynamic = 'force-dynamic';
@@ -12,16 +11,6 @@ export async function GET(req: NextRequest) {
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
     // Get stats
     const [
       totalUsers,
@@ -155,3 +144,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
   }
 }
+

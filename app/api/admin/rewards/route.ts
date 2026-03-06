@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
-import { verifyToken } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { dailyRewardCoins } from '@/lib/rewards';
 
@@ -15,16 +14,6 @@ export async function GET(req: NextRequest) {
     const adminAuth = await requireAdminUser(req);
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
-    }
-
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -213,3 +202,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch reward management data' }, { status: 500 });
   }
 }
+

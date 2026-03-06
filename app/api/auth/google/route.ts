@@ -3,6 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '@/lib/prisma';
 import { generateToken } from '@/lib/auth';
 import { resolveAccountRestriction } from '@/lib/account-status';
+import { rateLimit } from '@/lib/match-v1/redis-guards';
 
 function getAllowedGoogleClientIds() {
   const ids = [
@@ -17,13 +18,21 @@ function getAllowedGoogleClientIds() {
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get('x-forwarded-for') ?? 'anon';
+    const limiter = await rateLimit(`rl:auth:google:${ip}`, 20, 60);
+    if (!limiter.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const allowedClientIds = getAllowedGoogleClientIds();
     if (allowedClientIds.length === 0) {
       return NextResponse.json({ error: 'Google auth not configured' }, { status: 500 });
     }
 
     const client = new OAuth2Client(allowedClientIds[0]);
-    const { idToken, accessToken } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const idToken = body?.idToken;
+    const accessToken = body?.accessToken;
 
     let payload:
       | {
@@ -101,10 +110,18 @@ export async function POST(req: NextRequest) {
     }
 
     const token = generateToken(user.id);
-    return NextResponse.json({
+    const response = NextResponse.json({
       token,
       user: { id: user.id, email: user.email, name: user.name },
     });
+    response.cookies.set('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30,
+    });
+    return response;
   } catch (error) {
     console.error('Google auth error:', error);
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });

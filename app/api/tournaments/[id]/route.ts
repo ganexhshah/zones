@@ -1,21 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
-
-function getAuthPayload(req: NextRequest) {
-  const token = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (!token) return null;
-  return verifyToken(token);
-}
+import { requireAuthUser } from '@/lib/route-auth';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const payload = getAuthPayload(req);
-    if (!payload) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const tournamentId = params.id;
@@ -25,7 +19,7 @@ export async function GET(
       include: {
         participants: {
           where: {
-            userId: payload.userId,
+            userId: auth.user.id,
           },
         },
       },

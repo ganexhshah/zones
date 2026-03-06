@@ -1,47 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { requireAuthUser } from '@/lib/route-auth';
 import { sendPushToUser } from '@/lib/push';
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const { tournamentId } = await req.json();
 
-    const tournament = await prisma.tournament.findUnique({
-      where: { id: tournamentId },
-      include: { participants: true },
-    });
-
-    if (!tournament) {
-      return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
-    }
-
-    if (tournament.participants.length >= tournament.maxPlayers) {
-      return NextResponse.json({ error: 'Tournament is full' }, { status: 400 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-    });
-
-    if (!user || user.walletBalance < tournament.entryFee) {
-      return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
-    }
-
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Tournament" WHERE id = ${tournamentId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${auth.user.id} FOR UPDATE`;
+
+      const tournament = await tx.tournament.findUnique({
+        where: { id: tournamentId },
+        select: { id: true, entryFee: true, maxPlayers: true },
+      });
+      if (!tournament) {
+        throw Object.assign(new Error('Tournament not found'), { code: 'TOURNAMENT_NOT_FOUND' });
+      }
+
+      const participantCount = await tx.tournamentParticipant.count({
+        where: { tournamentId },
+      });
+      if (participantCount >= tournament.maxPlayers) {
+        throw Object.assign(new Error('Tournament is full'), { code: 'TOURNAMENT_FULL' });
+      }
+
+      const user = await tx.user.findUnique({
+        where: { id: auth.user.id },
+        select: { id: true, walletBalance: true },
+      });
+      if (!user || user.walletBalance < tournament.entryFee) {
+        throw Object.assign(new Error('Insufficient balance'), { code: 'INSUFFICIENT_BALANCE' });
+      }
+
       const participant = await tx.tournamentParticipant.create({
         data: {
-          userId: payload.userId,
+          userId: auth.user.id,
           tournamentId,
         },
       });
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
         where: {
           tournamentId_userId: {
             tournamentId,
-            userId: payload.userId,
+            userId: auth.user.id,
           },
         },
         update: {
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
         },
         create: {
           tournamentId,
-          userId: payload.userId,
+          userId: auth.user.id,
           paid: true,
           status: 'APPROVED',
           approvedAt: new Date(),
@@ -69,13 +69,17 @@ export async function POST(req: NextRequest) {
       });
 
       await tx.user.update({
-        where: { id: payload.userId },
-        data: { walletBalance: user.walletBalance - tournament.entryFee },
+        where: { id: auth.user.id },
+        data: {
+          walletBalance: {
+            decrement: tournament.entryFee,
+          },
+        },
       });
 
       await tx.transaction.create({
         data: {
-          userId: payload.userId,
+          userId: auth.user.id,
           type: 'tournament_entry',
           amount: -tournament.entryFee,
           status: 'completed',
@@ -83,13 +87,13 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return participant;
+      return { participant, entryFee: tournament.entryFee };
     });
 
-    if (tournament.entryFee > 0) {
-      await sendPushToUser(payload.userId, {
+    if (result.entryFee > 0) {
+      await sendPushToUser(auth.user.id, {
         title: 'Entry Fee Deducted',
-        body: `Rs ${tournament.entryFee.toFixed(2)} deducted for tournament entry.`,
+        body: `Rs ${result.entryFee.toFixed(2)} deducted for tournament entry.`,
         data: {
           type: 'tournament_entry',
           status: 'completed',
@@ -98,8 +102,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ participant: result });
+    return NextResponse.json({ participant: result.participant });
   } catch (error: any) {
+    if (error.code === 'TOURNAMENT_NOT_FOUND') {
+      return NextResponse.json({ error: 'Tournament not found' }, { status: 404 });
+    }
+    if (error.code === 'TOURNAMENT_FULL') {
+      return NextResponse.json({ error: 'Tournament is full' }, { status: 400 });
+    }
+    if (error.code === 'INSUFFICIENT_BALANCE') {
+      return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+    }
     if (error.code === 'P2002') {
       return NextResponse.json({ error: 'Already joined' }, { status: 400 });
     }

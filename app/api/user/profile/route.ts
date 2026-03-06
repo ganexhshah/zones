@@ -5,7 +5,7 @@ import { resolveAccountRestriction } from '@/lib/account-status';
 
 export async function GET(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
+    const token = req.headers.get('authorization')?.replace('Bearer ', '') ?? req.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
+    const token = req.headers.get('authorization')?.replace('Bearer ', '') ?? req.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -121,3 +121,4 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Update failed' }, { status: 500 });
   }
 }
+

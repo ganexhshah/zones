@@ -3,6 +3,8 @@ import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
 import { cloudinary } from '@/lib/cloudinary';
 
+const MAX_QR_IMAGE_BYTES = 5 * 1024 * 1024;
+
 // Get all payment QR codes
 export async function GET(req: NextRequest) {
   try {
@@ -36,6 +38,12 @@ export async function POST(req: NextRequest) {
 
     if (!method || !qrImage) {
       return NextResponse.json({ error: 'Method and QR image are required' }, { status: 400 });
+    }
+    if (!qrImage.type?.startsWith('image/')) {
+      return NextResponse.json({ error: 'QR must be an image file' }, { status: 400 });
+    }
+    if (qrImage.size > MAX_QR_IMAGE_BYTES) {
+      return NextResponse.json({ error: 'QR image must be 5MB or smaller' }, { status: 400 });
     }
 
     // Upload QR code to Cloudinary

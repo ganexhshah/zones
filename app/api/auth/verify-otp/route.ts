@@ -3,19 +3,36 @@ import { prisma } from '@/lib/prisma';
 import { redis } from '@/lib/redis';
 import { generateToken } from '@/lib/auth';
 import { resolveAccountRestriction } from '@/lib/account-status';
+import { rateLimit } from '@/lib/match-v1/redis-guards';
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, otp } = await req.json();
+    const ip = req.headers.get('x-forwarded-for') ?? 'anon';
+    const body = await req.json().catch(() => ({}));
+    const email = String(body?.email || '').trim().toLowerCase();
+    const otp = String(body?.otp || '').trim();
+
+    if (!email || !otp) {
+      return NextResponse.json({ error: 'Invalid OTP' }, { status: 400 });
+    }
+
+    const ipLimiter = await rateLimit(`rl:auth:verify-otp:ip:${ip}`, 20, 60);
+    if (!ipLimiter.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+    const emailLimiter = await rateLimit(`rl:auth:verify-otp:email:${email}`, 10, 600);
+    if (!emailLimiter.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
 
     const storedOTP = await redis.get(`otp:${email}`);
 
     if (!storedOTP) {
-      return NextResponse.json({ error: 'Invalid OTP or OTP expired' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid OTP' }, { status: 400 });
     }
     
     // Convert both to strings for comparison
-    const otpString = String(otp).trim();
+    const otpString = otp;
     const storedOTPString = String(storedOTP).trim();
 
     if (storedOTPString !== otpString) {
@@ -25,7 +42,7 @@ export async function POST(req: NextRequest) {
     const signupData = await redis.get(`signup:${email}`);
 
     if (!signupData) {
-      return NextResponse.json({ error: 'Session expired' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid OTP' }, { status: 400 });
     }
 
     // Handle both string and object responses from Redis
@@ -48,13 +65,14 @@ export async function POST(req: NextRequest) {
         data: { 
           isVerified: true,
           password: userData.password,
+          passwordHash: userData.password,
           name: userData.name || existingUser.name,
           phone: userData.phone || existingUser.phone,
         },
       });
     } else {
       user = await prisma.user.create({
-        data: { ...userData, isVerified: true },
+        data: { ...userData, passwordHash: userData.password, isVerified: true },
       });
     }
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,16 +10,6 @@ export async function GET(req: NextRequest) {
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
     const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     // Get total counts
@@ -142,3 +131,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch user stats' }, { status: 500 });
   }
 }
+

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminUser } from '@/lib/route-auth';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,19 +10,12 @@ export async function GET(req: NextRequest) {
     if ('error' in adminAuth) {
       return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
     }
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '20');
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(searchParams.get('limit') || '20', 10)),
+    );
     const status = searchParams.get('status');
     const type = searchParams.get('type');
     const search = (searchParams.get('search') || '').trim();
@@ -99,3 +91,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
   }
 }
+

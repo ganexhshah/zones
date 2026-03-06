@@ -83,41 +83,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Select at least one permission' }, { status: 400 });
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const existingUser = await tx.user.findUnique({ where: { email } });
-      let userId: string;
-
-      if (!existingUser) {
-        const newUser = await tx.user.create({
-          data: {
-            email,
-            name: name || email,
-            password: await hashPassword(password),
-            authProvider: 'email',
-            isVerified: true,
-          },
-        });
-        userId = newUser.id;
-      } else {
-        userId = existingUser.id;
-        await tx.user.update({
-          where: { id: userId },
-          data: {
-            name: name || existingUser.name || email,
-            password: await hashPassword(password),
-          },
-        });
-      }
-
-      return tx.subAdmin.upsert({
-        where: { userId },
-        update: {
-          permissions,
-          isActive,
-          createdByUserId: adminAuth.user.id,
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      return NextResponse.json(
+        {
+          error:
+            'Email already exists. Use a new email for sub admin creation or edit the existing sub admin account.',
         },
-        create: {
-          userId,
+        { status: 409 },
+      );
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email,
+          name: name || email,
+          password: await hashPassword(password),
+          authProvider: 'email',
+          isVerified: true,
+        },
+      });
+
+      return tx.subAdmin.create({
+        data: {
+          userId: newUser.id,
           permissions,
           isActive,
           createdByUserId: adminAuth.user.id,

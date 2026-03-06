@@ -58,10 +58,17 @@ export async function GET(request: NextRequest) {
       select: {
         id: true,
         name: true,
-        email: true,
         avatar: true,
         walletBalance: true,
         createdAt: true,
+        pushTokens: {
+          where: { isActive: true },
+          select: {
+            updatedAt: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+        },
         _count: {
           select: {
             customMatchesCreated: true,
@@ -77,20 +84,27 @@ export async function GET(request: NextRequest) {
     const formattedUsers = users.map((user) => {
       const totalMatches =
         user._count.customMatchesCreated + user._count.customMatchParticipants;
+      const displayName = user.name?.trim().length ? user.name : `Player ${user.id.slice(0, 6)}`;
       
       let level = 'Beginner';
       if (totalMatches >= 50) level = 'Master';
       else if (totalMatches >= 20) level = 'Elite';
       else if (totalMatches >= 5) level = 'Pro';
 
+      const usernameSource = user.name?.trim().length
+        ? user.name.toLowerCase().replace(/\s+/g, '_')
+        : `player_${user.id.slice(0, 8)}`;
+      const lastSeenAt = user.pushTokens[0]?.updatedAt;
+      const isOnline = Boolean(lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() <= 5 * 60 * 1000);
+
       return {
         id: user.id,
-        name: user.name || user.email,
-        username: `@${(user.name || user.email).toLowerCase().replace(/\s+/g, '_')}`,
+        name: displayName,
+        username: `@${usernameSource}`,
         avatar: user.avatar,
         level,
         balance: user.walletBalance || 0,
-        isOnline: Math.random() > 0.5, // TODO: Implement real online status
+        isOnline,
       };
     });
 

@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken, verifyPassword, hashPassword } from '@/lib/auth';
+import { verifyPassword, hashPassword } from '@/lib/auth';
+import { requireAuthUser } from '@/lib/route-auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const token = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await requireAuthUser(req);
+    if ('error' in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const { currentPassword, newPassword } = await req.json();
@@ -25,22 +21,26 @@ export async function POST(req: NextRequest) {
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
+      where: { id: auth.user.id },
     });
 
-    if (!user || !user.password) {
+    const hash = user?.passwordHash ?? user?.password;
+    if (!user || !hash) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const isValid = await verifyPassword(currentPassword, user.password);
+    const isValid = await verifyPassword(currentPassword, hash);
     if (!isValid) {
       return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
     }
 
     const hashedPassword = await hashPassword(newPassword);
     await prisma.user.update({
-      where: { id: payload.userId },
-      data: { password: hashedPassword },
+      where: { id: auth.user.id },
+      data: {
+        password: hashedPassword,
+        passwordHash: hashedPassword,
+      },
     });
 
     return NextResponse.json({ message: 'Password changed successfully' });

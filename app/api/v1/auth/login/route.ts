@@ -6,6 +6,7 @@ import { fail, handleApiError, ok } from '@/lib/match-v1/http';
 import { rateLimit } from '@/lib/match-v1/redis-guards';
 import { loginSchema } from '@/lib/match-v1/validators';
 import { hashToken, signAccessToken, signRefreshToken } from '@/lib/match-v1/auth-tokens';
+import { resolveAccountRestriction } from '@/lib/account-status';
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +27,14 @@ export async function POST(req: NextRequest) {
 
     const valid = await verifyPassword(payload.password, hash);
     if (!valid) return fail('Invalid credentials', 401);
+
+    const restriction = await resolveAccountRestriction(user);
+    if (restriction) {
+      return fail(
+        restriction.status === 'SUSPENDED' ? 'Account suspended' : 'Account blocked',
+        403,
+      );
+    }
 
     const accessToken = signAccessToken(user.id);
     const refreshToken = signRefreshToken(user.id);

@@ -4,43 +4,41 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('Creating admin user...');
+  const email = process.env.ADMIN_SEED_EMAIL?.trim().toLowerCase();
+  const password = process.env.ADMIN_SEED_PASSWORD ?? '';
+  const name = process.env.ADMIN_SEED_NAME?.trim() || 'Admin User';
 
-  const email = 'admin@crackzones.com';
-  const password = 'admin123';
+  if (!email || !password) {
+    throw new Error('ADMIN_SEED_EMAIL and ADMIN_SEED_PASSWORD are required');
+  }
+  if (password.length < 12) {
+    throw new Error('ADMIN_SEED_PASSWORD must be at least 12 characters');
+  }
+
+  console.log(`Seeding admin user for ${email}...`);
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  // Check if admin already exists
   const existingAdmin = await prisma.user.findUnique({
     where: { email },
   });
 
   if (existingAdmin) {
-    console.log('Admin user already exists!');
-    console.log('Email:', email);
-    console.log('Password: admin123');
+    console.log(`Admin user already exists for ${email}`);
     return;
   }
 
-  // Create admin user
-  const admin = await prisma.user.create({
+  await prisma.user.create({
     data: {
       email,
       password: hashedPassword,
-      name: 'Admin User',
+      passwordHash: hashedPassword,
+      name,
       isVerified: true,
       walletBalance: 0,
     },
   });
 
-  console.log('✅ Admin user created successfully!');
-  console.log('');
-  console.log('Login Credentials:');
-  console.log('==================');
-  console.log('Email:', email);
-  console.log('Password: admin123');
-  console.log('');
-  console.log('Use these credentials to login to the admin panel at http://localhost:3000');
+  console.log(`Admin user created for ${email}`);
 }
 
 main()
