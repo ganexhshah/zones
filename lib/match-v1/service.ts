@@ -23,6 +23,179 @@ function now() {
   return new Date();
 }
 
+const RESULT_EDIT_WINDOW_SECONDS = 60;
+const RESULT_TIMEOUT_MINUTES = 15;
+const RESULT_NOTE_PREFIX = '__rc:';
+
+type ResultChoice = 'won' | 'lost' | 'report_issue';
+type ResultWorkflowStatus =
+  | 'awaiting_results'
+  | 'waiting_opponent'
+  | 'pending_verification'
+  | 'under_review'
+  | 'timeout_pending_review'
+  | 'conflict'
+  | 'invalid_result'
+  | 'admin_verified'
+  | 'paid';
+
+type ParsedResultNote = {
+  resultChoice: ResultChoice;
+  note: string | null;
+  reportReason: string | null;
+  reportDescription: string | null;
+};
+
+function encodeResultNote(params: {
+  resultChoice: ResultChoice;
+  note?: string | null;
+  reportReason?: string | null;
+  reportDescription?: string | null;
+}) {
+  const resultChoice = params.resultChoice;
+  const cleaned = (params.note ?? '').trim();
+  const payload = {
+    resultChoice,
+    note: cleaned || null,
+    reportReason: (params.reportReason ?? '').trim() || null,
+    reportDescription: (params.reportDescription ?? '').trim() || null,
+  };
+  return `${RESULT_NOTE_PREFIX}json__${JSON.stringify(payload)}`;
+}
+
+function parseResultNote(rawNote: string | null | undefined, claimedWinnerId: string, submittedBy: string): ParsedResultNote {
+  const fallbackChoice: ResultChoice = claimedWinnerId === submittedBy ? 'won' : 'lost';
+  const note = (rawNote ?? '').trim();
+  if (!note.startsWith(RESULT_NOTE_PREFIX)) {
+    return {
+      resultChoice: fallbackChoice,
+      note: note || null,
+      reportReason: null,
+      reportDescription: null,
+    };
+  }
+
+  if (note.startsWith(`${RESULT_NOTE_PREFIX}json__`)) {
+    const rawJson = note.slice(`${RESULT_NOTE_PREFIX}json__`.length).trim();
+    try {
+      const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+      const parsedChoiceRaw = (parsed.resultChoice ?? '').toString();
+      const parsedChoice: ResultChoice =
+        parsedChoiceRaw === 'won' || parsedChoiceRaw === 'lost' || parsedChoiceRaw === 'report_issue'
+          ? parsedChoiceRaw
+          : fallbackChoice;
+      return {
+        resultChoice: parsedChoice,
+        note: (parsed.note ?? '').toString().trim() || null,
+        reportReason: (parsed.reportReason ?? '').toString().trim() || null,
+        reportDescription: (parsed.reportDescription ?? '').toString().trim() || null,
+      };
+    } catch {
+      return {
+        resultChoice: fallbackChoice,
+        note: note || null,
+        reportReason: null,
+        reportDescription: null,
+      };
+    }
+  }
+
+  const endMarker = note.indexOf('__', RESULT_NOTE_PREFIX.length);
+  if (endMarker < 0) {
+    return {
+      resultChoice: fallbackChoice,
+      note: note || null,
+      reportReason: null,
+      reportDescription: null,
+    };
+  }
+
+  const choiceRaw = note.slice(RESULT_NOTE_PREFIX.length, endMarker).trim();
+  const parsedChoice: ResultChoice =
+    choiceRaw === 'won' || choiceRaw === 'lost' || choiceRaw === 'report_issue'
+      ? choiceRaw
+      : fallbackChoice;
+  const remaining = note.slice(endMarker + 2).trim();
+
+  return {
+    resultChoice: parsedChoice,
+    note: remaining || null,
+    reportReason: null,
+    reportDescription: null,
+  };
+}
+
+function getResultStatusMeta(meta: unknown): {
+  resultStatus?: ResultWorkflowStatus;
+  resultDeadlineAt?: string | null;
+  revealResults?: boolean;
+  winnerUserId?: string | null;
+} {
+  if (!meta || typeof meta !== 'object') return {};
+  const obj = meta as Record<string, unknown>;
+  const resultStatusRaw = typeof obj.resultStatus === 'string' ? obj.resultStatus : undefined;
+  const isKnownStatus = (
+    resultStatusRaw === 'awaiting_results' ||
+    resultStatusRaw === 'waiting_opponent' ||
+    resultStatusRaw === 'pending_verification' ||
+    resultStatusRaw === 'under_review' ||
+    resultStatusRaw === 'timeout_pending_review' ||
+    resultStatusRaw === 'conflict' ||
+    resultStatusRaw === 'invalid_result' ||
+    resultStatusRaw === 'admin_verified' ||
+    resultStatusRaw === 'paid'
+  );
+  return {
+    resultStatus: isKnownStatus ? resultStatusRaw : undefined,
+    resultDeadlineAt: typeof obj.resultDeadlineAt === 'string' ? obj.resultDeadlineAt : null,
+    revealResults: obj.revealResults === true,
+    winnerUserId: typeof obj.winnerUserId === 'string' ? obj.winnerUserId : null,
+  };
+}
+
+function evaluateResultWorkflow(params: {
+  creatorId: string;
+  joinerId: string;
+  creatorChoice?: ResultChoice | null;
+  joinerChoice?: ResultChoice | null;
+}): { status: ResultWorkflowStatus; winnerUserId: string | null; revealResults: boolean } {
+  const { creatorChoice, joinerChoice, creatorId, joinerId } = params;
+
+  if (!creatorChoice && !joinerChoice) {
+    return {
+      status: 'awaiting_results',
+      winnerUserId: null,
+      revealResults: false,
+    };
+  }
+
+  if (!creatorChoice || !joinerChoice) {
+    return {
+      status: 'waiting_opponent',
+      winnerUserId: null,
+      revealResults: false,
+    };
+  }
+
+  if (creatorChoice === 'report_issue' || joinerChoice === 'report_issue') {
+    return { status: 'under_review', winnerUserId: null, revealResults: true };
+  }
+
+  if (creatorChoice === 'won' && joinerChoice === 'lost') {
+    return { status: 'pending_verification', winnerUserId: creatorId, revealResults: true };
+  }
+  if (creatorChoice === 'lost' && joinerChoice === 'won') {
+    return { status: 'pending_verification', winnerUserId: joinerId, revealResults: true };
+  }
+  if (creatorChoice === 'won' && joinerChoice === 'won') {
+    return { status: 'conflict', winnerUserId: null, revealResults: true };
+  }
+  if (creatorChoice === 'lost' && joinerChoice === 'lost') {
+    return { status: 'invalid_result', winnerUserId: null, revealResults: true };
+  }
+  return { status: 'under_review', winnerUserId: null, revealResults: true };
+}
+
 function getEffectiveAvailableBalance(user: {
   availableBalance: Prisma.Decimal | number | string;
   lockedBalance: Prisma.Decimal | number | string;
@@ -328,7 +501,7 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
         orderBy: { createdAt: 'desc' },
       },
       logs: {
-        where: { action: { in: ['RESULT_SUBMITTED', 'MATCH_COMPLETED'] } },
+        where: { action: { in: ['RESULT_SUBMITTED', 'RESULT_WORKFLOW_UPDATED', 'RESULT_REVIEWED', 'MATCH_COMPLETED'] } },
         orderBy: { createdAt: 'desc' },
         take: 20,
         include: {
@@ -364,11 +537,93 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
   }
 
   const latestSubmissionLog = match.logs.find((log) => log.action === 'RESULT_SUBMITTED');
+  const latestWorkflowLog = match.logs.find((log) => log.action === 'RESULT_WORKFLOW_UPDATED');
+  const latestReviewLog = match.logs.find((log) => log.action === 'RESULT_REVIEWED');
   const latestCompletionLog = match.logs.find((log) => log.action === 'MATCH_COMPLETED');
+
+  const claimsWithChoice = (match.resultClaims || []).map((claim) => {
+    const parsed = parseResultNote(claim.note, claim.claimedWinnerId, claim.submittedBy);
+    return {
+      ...claim,
+      resultChoice: parsed.resultChoice,
+      note: parsed.note,
+      reportReason: parsed.reportReason,
+      reportDescription: parsed.reportDescription,
+    };
+  });
+
+  const creatorClaim = claimsWithChoice.find((claim) => claim.submittedBy === match.creatorId);
+  const joinerClaim = claimsWithChoice.find((claim) => claim.submittedBy === match.joinerId);
+  const firstSubmittedClaim = claimsWithChoice
+    .slice()
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0] ?? null;
+  const deadlineAt = firstSubmittedClaim
+    ? new Date(firstSubmittedClaim.createdAt.getTime() + RESULT_TIMEOUT_MINUTES * 60 * 1000)
+    : null;
+  const timeoutReached = deadlineAt ? now().getTime() > deadlineAt.getTime() : false;
+
+  let computedState = evaluateResultWorkflow({
+    creatorId: match.creatorId,
+    joinerId: match.joinerId ?? '',
+    creatorChoice: creatorClaim?.resultChoice,
+    joinerChoice: joinerClaim?.resultChoice,
+  });
+  if (computedState.status === 'waiting_opponent' && timeoutReached && firstSubmittedClaim) {
+    if (firstSubmittedClaim.resultChoice === 'won') {
+      const hasProof = Boolean(firstSubmittedClaim.proofUrl && firstSubmittedClaim.proofUrl.trim());
+      const recentFraudFlags = await prisma.fraudFlag.count({
+        where: {
+          userId: firstSubmittedClaim.submittedBy,
+          createdAt: { gte: new Date(now().getTime() - 30 * 24 * 60 * 60 * 1000) },
+        },
+      });
+      computedState = hasProof && recentFraudFlags === 0
+        ? {
+            status: 'pending_verification',
+            winnerUserId: firstSubmittedClaim.submittedBy,
+            revealResults: true,
+          }
+        : {
+            status: 'under_review',
+            winnerUserId: null,
+            revealResults: true,
+          };
+    } else if (firstSubmittedClaim.resultChoice === 'lost') {
+      computedState = {
+        status: 'timeout_pending_review',
+        winnerUserId: null,
+        revealResults: true,
+      };
+    } else {
+      computedState = {
+        status: 'under_review',
+        winnerUserId: null,
+        revealResults: true,
+      };
+    }
+  }
+  const workflowMeta = getResultStatusMeta(latestWorkflowLog?.meta);
+  const reviewMeta = getResultStatusMeta(latestReviewLog?.meta);
+  const workflowStatus: ResultWorkflowStatus =
+    reviewMeta.resultStatus ??
+    workflowMeta.resultStatus ??
+    computedState.status;
+  const workflowWinnerUserId = reviewMeta.winnerUserId ?? workflowMeta.winnerUserId ?? computedState.winnerUserId;
+  const workflowDeadlineAt =
+    reviewMeta.resultDeadlineAt ??
+    workflowMeta.resultDeadlineAt ??
+    (deadlineAt ? deadlineAt.toISOString() : null);
+  const revealResults =
+    reviewMeta.revealResults === true ||
+    workflowMeta.revealResults === true ||
+    computedState.revealResults ||
+    match.status === MatchStatus.COMPLETED;
 
   const resultSubmission = latestSubmissionLog
     ? {
-        status: 'SUBMITTED_FOR_VERIFICATION',
+        status: workflowStatus,
+        resultDeadlineAt: workflowDeadlineAt,
+        revealResults,
         submittedAt: latestSubmissionLog.createdAt,
         submittedBy: latestSubmissionLog.performer
           ? {
@@ -378,11 +633,14 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
             }
           : null,
         winnerUserId:
-          latestSubmissionLog.meta &&
-          typeof latestSubmissionLog.meta === 'object' &&
-          'winnerUserId' in latestSubmissionLog.meta
-            ? (latestSubmissionLog.meta as { winnerUserId?: string }).winnerUserId ?? null
-            : null,
+          workflowWinnerUserId ??
+          (
+            latestSubmissionLog.meta &&
+            typeof latestSubmissionLog.meta === 'object' &&
+            'winnerUserId' in latestSubmissionLog.meta
+              ? (latestSubmissionLog.meta as { winnerUserId?: string }).winnerUserId ?? null
+              : null
+          ),
         note:
           latestSubmissionLog.meta &&
           typeof latestSubmissionLog.meta === 'object' &&
@@ -396,7 +654,7 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
             ? (latestSubmissionLog.meta as { proofUrl?: string }).proofUrl ?? null
             : null,
       }
-    : null;
+      : null;
 
   const completion = latestCompletionLog
     ? {
@@ -419,7 +677,9 @@ export async function getMatchDetails(matchId: string, requesterId: string) {
     roomPasswordMasked: roomPassword,
     resultSubmission,
     completion,
-    resultClaims: match.resultClaims || [],
+    resultClaims: isParticipant && !revealResults
+      ? claimsWithChoice.filter((claim) => claim.submittedBy === requesterId)
+      : claimsWithChoice,
   };
 }
 
@@ -1048,55 +1308,142 @@ export async function submitRoom(params: {
 export async function submitResult(params: {
   matchId: string;
   submittedBy: string;
-  winnerUserId: string;
+  resultChoice: ResultChoice;
+  hasScreenshot: boolean;
   note?: string;
+  reportReason?: string;
+  reportDescription?: string;
   proofUrl?: string;
 }) {
+  const normalizedProofUrl = params.proofUrl?.trim() ? params.proofUrl.trim() : null;
+  const requiresProof =
+    params.resultChoice === 'won' ||
+    params.resultChoice === 'report_issue' ||
+    params.hasScreenshot;
+  if (requiresProof && !normalizedProofUrl) {
+    throw new Error('PROOF_REQUIRED');
+  }
+  if (params.resultChoice === 'report_issue') {
+    if (!params.reportReason?.trim() || !params.reportDescription?.trim()) {
+      throw new Error('REPORT_REASON_REQUIRED');
+    }
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     await lockMatchRow(tx, params.matchId);
     const match = await tx.match.findUniqueOrThrow({ where: { id: params.matchId } });
     if (match.status !== MatchStatus.CONFIRMED) throw new Error('INVALID_STATUS');
+    if (!match.joinerId) throw new Error('NO_JOINER');
 
     if (params.submittedBy !== match.creatorId && params.submittedBy !== match.joinerId) {
       throw new Error('FORBIDDEN');
     }
 
-    // Create or update result claim
-    await tx.matchResultClaim.upsert({
+    const opponentId = params.submittedBy === match.creatorId ? match.joinerId : match.creatorId;
+    const claimedWinnerId =
+      params.resultChoice === 'won'
+        ? params.submittedBy
+        : params.resultChoice === 'lost'
+          ? opponentId
+          : params.submittedBy;
+
+    const existing = await tx.matchResultClaim.findUnique({
       where: {
         matchId_submittedBy: {
           matchId: params.matchId,
           submittedBy: params.submittedBy,
         },
       },
-      create: {
-        matchId: params.matchId,
-        submittedBy: params.submittedBy,
-        claimedWinnerId: params.winnerUserId,
-        proofUrl: params.proofUrl ?? null,
-        note: params.note ?? null,
-        status: 'PENDING',
-      },
-      update: {
-        claimedWinnerId: params.winnerUserId,
-        proofUrl: params.proofUrl ?? null,
-        note: params.note ?? null,
-        status: 'PENDING',
-        rejectionReason: null,
-      },
     });
 
-    // Also create a log entry for backwards compatibility
+    const encodedNote = encodeResultNote({
+      resultChoice: params.resultChoice,
+      note: params.note ?? null,
+      reportReason: params.reportReason ?? null,
+      reportDescription: params.reportDescription ?? null,
+    });
+    const currentTime = now();
+    if (existing) {
+      const editWindowMs = RESULT_EDIT_WINDOW_SECONDS * 1000;
+      const editableUntil = existing.createdAt.getTime() + editWindowMs;
+      if (currentTime.getTime() > editableUntil) {
+        throw new Error('RESULT_EDIT_WINDOW_EXPIRED');
+      }
+      await tx.matchResultClaim.update({
+        where: { id: existing.id },
+        data: {
+          claimedWinnerId,
+          proofUrl: requiresProof ? normalizedProofUrl : null,
+          note: encodedNote,
+          status: 'PENDING',
+          rejectionReason: null,
+        },
+      });
+    } else {
+      await tx.matchResultClaim.create({
+        data: {
+          matchId: params.matchId,
+          submittedBy: params.submittedBy,
+          claimedWinnerId,
+          proofUrl: requiresProof ? normalizedProofUrl : null,
+          note: encodedNote,
+          status: 'PENDING',
+        },
+      });
+    }
+
+    const claims = await tx.matchResultClaim.findMany({
+      where: { matchId: params.matchId },
+      orderBy: { createdAt: 'asc' },
+    });
+    const creatorClaim = claims.find((claim) => claim.submittedBy === match.creatorId);
+    const joinerClaim = claims.find((claim) => claim.submittedBy === match.joinerId);
+    const creatorParsed = creatorClaim
+      ? parseResultNote(creatorClaim.note, creatorClaim.claimedWinnerId, creatorClaim.submittedBy)
+      : null;
+    const joinerParsed = joinerClaim
+      ? parseResultNote(joinerClaim.note, joinerClaim.claimedWinnerId, joinerClaim.submittedBy)
+      : null;
+
+    const workflow = evaluateResultWorkflow({
+      creatorId: match.creatorId,
+      joinerId: match.joinerId,
+      creatorChoice: creatorParsed?.resultChoice,
+      joinerChoice: joinerParsed?.resultChoice,
+    });
+    const firstSubmissionAt = claims[0]?.createdAt ?? currentTime;
+    const deadlineAt = new Date(firstSubmissionAt.getTime() + RESULT_TIMEOUT_MINUTES * 60 * 1000);
+
     await tx.matchLog.create({
       data: {
         matchId: params.matchId,
         action: 'RESULT_SUBMITTED',
         performedBy: params.submittedBy,
         meta: {
-          winnerUserId: params.winnerUserId,
-          note: params.note ?? null,
-          proofUrl: params.proofUrl ?? null,
-          status: 'SUBMITTED_FOR_VERIFICATION',
+          resultChoice: params.resultChoice,
+          hasScreenshot: requiresProof,
+          winnerUserId: workflow.winnerUserId,
+          note: (params.note ?? '').trim() || null,
+          reportReason: (params.reportReason ?? '').trim() || null,
+          reportDescription: (params.reportDescription ?? '').trim() || null,
+          proofUrl: requiresProof ? normalizedProofUrl : null,
+          resultStatus: workflow.status,
+          resultDeadlineAt: deadlineAt.toISOString(),
+          revealResults: workflow.revealResults,
+        },
+      },
+    });
+
+    await tx.matchLog.create({
+      data: {
+        matchId: params.matchId,
+        action: 'RESULT_WORKFLOW_UPDATED',
+        performedBy: params.submittedBy,
+        meta: {
+          resultStatus: workflow.status,
+          winnerUserId: workflow.winnerUserId,
+          resultDeadlineAt: deadlineAt.toISOString(),
+          revealResults: workflow.revealResults,
         },
       },
     });
@@ -1105,6 +1452,9 @@ export async function submitResult(params: {
       submitted: true,
       creatorId: match.creatorId,
       joinerId: match.joinerId,
+      workflowStatus: workflow.status,
+      winnerUserId: workflow.winnerUserId,
+      revealResults: workflow.revealResults,
     };
   });
 
@@ -1115,18 +1465,27 @@ export async function submitResult(params: {
         notifyUser({
           userId,
           title: 'Result Submitted',
-          body: 'Result submitted. Waiting for admin verification.',
+          body:
+            result.workflowStatus === 'waiting_opponent'
+              ? 'Result submitted. Waiting for opponent submission.'
+              : 'Result submitted. Waiting for admin verification.',
           data: {
             event: 'result_submitted',
             matchId: params.matchId,
             status: MatchStatus.CONFIRMED,
+            resultStatus: result.workflowStatus,
           },
         })
       )
     );
   }
 
-  return { submitted: true };
+  return {
+    submitted: true,
+    resultStatus: result.workflowStatus,
+    winnerUserId: result.winnerUserId,
+    revealResults: result.revealResults,
+  };
 }
 
 export async function reportMatchIssue(params: {
@@ -1383,6 +1742,147 @@ export async function verifyMatchAndPayout(params: {
       },
     }),
   ]);
+}
+
+export async function reviewMatchResult(params: {
+  matchId: string;
+  reviewedBy: string;
+  action: 'approve_winner' | 'refund_both' | 'cancel_match';
+  winnerUserId?: string;
+  note?: string;
+}) {
+  if (params.action === 'approve_winner') {
+    if (!params.winnerUserId) throw new Error('WINNER_REQUIRED');
+    await verifyMatchAndPayout({
+      matchId: params.matchId,
+      verifiedBy: params.reviewedBy,
+      winnerUserId: params.winnerUserId,
+    });
+    await prisma.matchLog.create({
+      data: {
+        matchId: params.matchId,
+        action: 'RESULT_REVIEWED',
+        performedBy: params.reviewedBy,
+        meta: {
+          action: params.action,
+          winnerUserId: params.winnerUserId,
+          note: (params.note ?? '').trim() || null,
+          resultStatus: 'paid',
+          adminStatus: 'admin_verified',
+        },
+      },
+    });
+    return {
+      action: params.action,
+      status: 'paid',
+      winnerUserId: params.winnerUserId,
+    };
+  }
+
+  const settlement = await prisma.$transaction(async (tx) => {
+    await lockMatchRow(tx, params.matchId);
+    const match = await tx.match.findUniqueOrThrow({ where: { id: params.matchId } });
+    if (!match.joinerId) throw new Error('NO_JOINER');
+    if (match.status !== MatchStatus.CONFIRMED) throw new Error('INVALID_STATUS');
+
+    const escrow = await tx.escrow.findFirst({
+      where: { matchId: params.matchId, status: EscrowStatus.LOCKED },
+    });
+    if (!escrow) throw new Error('ESCROW_NOT_FOUND');
+
+    await lockUserRow(tx, match.creatorId);
+    await lockUserRow(tx, match.joinerId);
+    const creator = await tx.user.findUniqueOrThrow({ where: { id: match.creatorId } });
+    const joiner = await tx.user.findUniqueOrThrow({ where: { id: match.joinerId } });
+    const entryFee = new Prisma.Decimal(match.entryFee);
+
+    const creatorNext = new Prisma.Decimal(creator.availableBalance).plus(entryFee);
+    const joinerNext = new Prisma.Decimal(joiner.availableBalance).plus(entryFee);
+    await applyAvailableOnlyState(tx, creator.id, creatorNext);
+    await applyAvailableOnlyState(tx, joiner.id, joinerNext);
+
+    await appendLedger({
+      tx,
+      userId: creator.id,
+      matchId: match.id,
+      type: WalletLedgerType.REFUND,
+      amount: entryFee,
+      balanceAfter: creatorNext,
+    });
+    await appendLedger({
+      tx,
+      userId: joiner.id,
+      matchId: match.id,
+      type: WalletLedgerType.REFUND,
+      amount: entryFee,
+      balanceAfter: joinerNext,
+    });
+
+    await tx.escrow.updateMany({
+      where: { matchId: match.id, status: EscrowStatus.LOCKED },
+      data: { status: EscrowStatus.REFUNDED },
+    });
+
+    await tx.match.update({
+      where: { id: match.id },
+      data: {
+        status: params.action === 'cancel_match' ? MatchStatus.CANCELLED : MatchStatus.COMPLETED,
+        completedAt: now(),
+      },
+    });
+
+    await tx.matchLog.create({
+      data: {
+        matchId: match.id,
+        action: params.action === 'cancel_match' ? 'MATCH_CANCELLED' : 'MATCH_REFUNDED',
+        performedBy: params.reviewedBy,
+        meta: {
+          adminAction: params.action,
+          note: (params.note ?? '').trim() || null,
+        },
+      },
+    });
+
+    await tx.matchLog.create({
+      data: {
+        matchId: match.id,
+        action: 'RESULT_REVIEWED',
+        performedBy: params.reviewedBy,
+        meta: {
+          action: params.action,
+          note: (params.note ?? '').trim() || null,
+          resultStatus: 'admin_verified',
+          adminStatus: 'admin_verified',
+        },
+      },
+    });
+
+    return {
+      creatorId: match.creatorId,
+      joinerId: match.joinerId,
+      matchStatus: params.action === 'cancel_match' ? MatchStatus.CANCELLED : MatchStatus.COMPLETED,
+    };
+  });
+
+  emitMatchAndUsers({
+    matchId: params.matchId,
+    userIds: [settlement.creatorId, settlement.joinerId],
+    event: 'match.completed',
+    payload: {
+      matchId: params.matchId,
+      status: settlement.matchStatus,
+      resultStatus: 'admin_verified',
+      action: params.action,
+    },
+  });
+  emitToUser(settlement.creatorId, 'wallet.updated', { matchId: params.matchId, reason: 'MATCH_REVIEWED' });
+  emitToUser(settlement.joinerId, 'wallet.updated', { matchId: params.matchId, reason: 'MATCH_REVIEWED' });
+
+  return {
+    action: params.action,
+    status: 'admin_verified',
+    winnerUserId: null,
+  };
 }
 
 export async function getMatchLedger(matchId: string, requesterId: string) {

@@ -58,11 +58,16 @@ export async function GET(
 
     // Build result submission from logs for backward compatibility
     const latestSubmissionLog = match.logs.find((log) => log.action === 'RESULT_SUBMITTED');
+    const latestWorkflowLog = match.logs.find((log) => log.action === 'RESULT_WORKFLOW_UPDATED');
+    const latestReviewLog = match.logs.find((log) => log.action === 'RESULT_REVIEWED');
     const latestCompletionLog = match.logs.find((log) => log.action === 'MATCH_COMPLETED');
+    const workflowMeta = (latestReviewLog?.meta || latestWorkflowLog?.meta) as Record<string, unknown> | null;
 
     const resultSubmission = latestSubmissionLog
       ? {
-          status: 'SUBMITTED_FOR_VERIFICATION',
+          status: (workflowMeta?.resultStatus as string | undefined) ?? 'waiting_opponent',
+          resultDeadlineAt: (workflowMeta?.resultDeadlineAt as string | undefined) ?? null,
+          revealResults: workflowMeta?.revealResults === true,
           submittedAt: latestSubmissionLog.createdAt,
           submittedBy: latestSubmissionLog.performer
             ? {
@@ -72,11 +77,14 @@ export async function GET(
               }
             : null,
           winnerUserId:
-            latestSubmissionLog.meta &&
-            typeof latestSubmissionLog.meta === 'object' &&
-            'winnerUserId' in latestSubmissionLog.meta
-              ? (latestSubmissionLog.meta as { winnerUserId?: string }).winnerUserId ?? null
-              : null,
+            (workflowMeta?.winnerUserId as string | undefined) ??
+            (
+              latestSubmissionLog.meta &&
+              typeof latestSubmissionLog.meta === 'object' &&
+              'winnerUserId' in latestSubmissionLog.meta
+                ? (latestSubmissionLog.meta as { winnerUserId?: string }).winnerUserId ?? null
+                : null
+            ),
           note:
             latestSubmissionLog.meta &&
             typeof latestSubmissionLog.meta === 'object' &&
@@ -126,7 +134,67 @@ export async function GET(
         ...match,
         resultSubmission,
         completion,
-        resultClaims: match.resultClaims || [],
+        resultClaims: (match.resultClaims || []).map((claim) => {
+          const noteRaw = (claim.note ?? '').trim();
+          const fallbackChoice = claim.claimedWinnerId === claim.submittedBy ? 'won' : 'lost';
+          if (noteRaw.startsWith('__rc:json__')) {
+            const rawJson = noteRaw.slice('__rc:json__'.length).trim();
+            try {
+              const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+              const choiceRaw = (parsed.resultChoice ?? '').toString();
+              const resultChoice =
+                choiceRaw === 'won' || choiceRaw === 'lost' || choiceRaw === 'report_issue'
+                  ? choiceRaw
+                  : fallbackChoice;
+              return {
+                ...claim,
+                resultChoice,
+                note: (parsed.note ?? '').toString().trim() || null,
+                reportReason: (parsed.reportReason ?? '').toString().trim() || null,
+                reportDescription: (parsed.reportDescription ?? '').toString().trim() || null,
+              };
+            } catch {
+              return {
+                ...claim,
+                resultChoice: fallbackChoice,
+                note: noteRaw || null,
+                reportReason: null,
+                reportDescription: null,
+              };
+            }
+          }
+          if (!noteRaw.startsWith('__rc:')) {
+            return {
+              ...claim,
+              resultChoice: fallbackChoice,
+              note: noteRaw || null,
+              reportReason: null,
+              reportDescription: null,
+            };
+          }
+          const marker = noteRaw.indexOf('__', 5);
+          if (marker < 0) {
+            return {
+              ...claim,
+              resultChoice: fallbackChoice,
+              note: noteRaw || null,
+              reportReason: null,
+              reportDescription: null,
+            };
+          }
+          const choiceRaw = noteRaw.slice(5, marker).trim();
+          const resultChoice =
+            choiceRaw === 'won' || choiceRaw === 'lost' || choiceRaw === 'report_issue'
+              ? choiceRaw
+              : fallbackChoice;
+          return {
+            ...claim,
+            resultChoice,
+            note: noteRaw.slice(marker + 2).trim() || null,
+            reportReason: null,
+            reportDescription: null,
+          };
+        }),
         relatedTransactions,
       },
     });

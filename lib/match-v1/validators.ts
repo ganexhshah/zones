@@ -75,10 +75,25 @@ export const reviewJoinRequestSchema = z.object({
 
 
 export const submitResultSchema = z.object({
-  winnerUserId: z.string().min(1),
+  resultChoice: z.enum(['won', 'lost', 'report_issue']),
+  hasScreenshot: z.boolean().default(true),
   note: z.string().max(500).optional(),
+  reportReason: z.string().max(200).optional(),
+  reportDescription: z.string().max(1000).optional(),
   proofUrl: z.string().url().max(1000).optional(),
-});
+}).refine(
+  (data) => {
+    const needsProof = data.resultChoice === 'won' || data.resultChoice === 'report_issue' || data.hasScreenshot;
+    if (needsProof && !data.proofUrl?.trim()) return false;
+    if (data.resultChoice === 'report_issue') {
+      return Boolean(data.reportReason?.trim() && data.reportDescription?.trim());
+    }
+    return true;
+  },
+  {
+    message: 'Invalid result payload for selected action',
+  },
+);
 
 export const reportMatchSchema = z.object({
   reason: z.string().min(3).max(200),
@@ -87,9 +102,16 @@ export const reportMatchSchema = z.object({
 });
 
 export const verifyResultSchema = z.object({
-  winnerUserId: z.string().min(1),
-  platformFeePercent: z.number().min(0).max(100).default(5),
-});
+  action: z.enum(['approve_winner', 'refund_both', 'cancel_match']),
+  winnerUserId: z.string().min(1).optional(),
+  note: z.string().max(500).optional(),
+}).refine(
+  (data) => (data.action === 'approve_winner' ? Boolean(data.winnerUserId) : true),
+  {
+    message: 'winnerUserId is required when action is approve_winner',
+    path: ['winnerUserId'],
+  },
+);
 
 export const sendChatSchema = z.object({
   message: z.string().min(1).max(1000),

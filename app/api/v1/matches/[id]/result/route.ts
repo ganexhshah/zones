@@ -16,18 +16,26 @@ export async function POST(
     const body = submitResultSchema.parse(await req.json());
     const { id } = params;
 
-    await submitResult({
+    const outcome = await submitResult({
       matchId: id,
       submittedBy: auth.user.id,
-      winnerUserId: body.winnerUserId,
+      resultChoice: body.resultChoice,
+      hasScreenshot: body.hasScreenshot,
       note: body.note,
+      reportReason: body.reportReason,
+      reportDescription: body.reportDescription,
       proofUrl: body.proofUrl,
     });
 
     return ok({
       matchId: id,
-      resultStatus: 'SUBMITTED_FOR_VERIFICATION',
-      winnerUserId: body.winnerUserId,
+      resultStatus: outcome.resultStatus,
+      revealResults: outcome.revealResults,
+      winnerUserId: outcome.winnerUserId,
+      resultChoice: body.resultChoice,
+      hasScreenshot: body.hasScreenshot,
+      reportReason: body.reportReason ?? null,
+      reportDescription: body.reportDescription ?? null,
       proofUrl: body.proofUrl ?? null,
     });
   } catch (error) {

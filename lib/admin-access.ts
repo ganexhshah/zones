@@ -116,6 +116,7 @@ function getRoutePermission(pathname: string): AdminPermission | null {
   if (pathname.startsWith('/api/admin/settings')) return 'settings';
   if (pathname.startsWith('/api/v1/admin/matches')) return 'custom_management';
   if (pathname.startsWith('/api/v1/admin/wallet/reports')) return 'wallet_reports';
+  if (pathname.startsWith('/api/v1/admin/support/tickets')) return 'wallet_reports';
   if (pathname.startsWith('/api/v1/admin/reports/custom-matches')) return 'match_reports';
   return null;
 }

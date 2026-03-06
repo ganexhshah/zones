@@ -44,6 +44,14 @@ export function handleApiError(error: unknown) {
         return fail('Not found', 404);
       case 'INVALID_WINNER':
         return fail('Invalid winner for this match', 400);
+      case 'PROOF_REQUIRED':
+        return fail('Result screenshot is required', 400);
+      case 'REPORT_REASON_REQUIRED':
+        return fail('Report reason and description are required', 400);
+      case 'RESULT_EDIT_WINDOW_EXPIRED':
+        return fail('Result edit window expired. You can only edit within 1 minute.', 409);
+      case 'WINNER_REQUIRED':
+        return fail('Winner is required for this admin action', 400);
       case 'ROOM_CREDENTIALS_KEY missing. Set 64 hex chars or configure JWT/NEXTAUTH/AUTH secret.':
         return fail('Room encryption is not configured on server', 500);
       default:
